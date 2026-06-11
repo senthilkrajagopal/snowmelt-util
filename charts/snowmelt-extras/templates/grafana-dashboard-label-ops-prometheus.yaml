@@ -1,0 +1,63 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 6-panel Phase ε label-ops dashboard (prometheus-pinned). Same
+# exprs as the snowmelt-pinned dashboard except counter args use
+# the `_total` suffix per OpenMetrics convention.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-label-ops-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-label-ops.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true, "id": null,
+      "uid": "prometheus-label-ops",
+      "title": "Prometheus — label ops (Phase ε reference)",
+      "tags": ["prometheus", "promql", "label-ops", "phase-epsilon"],
+      "timezone": "", "schemaVersion": 38, "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "label_join(jvm_thread_count, region_az, -, cloud_region, cloud_availability_zone)"
+                  "expr"  "label_join(jvm_thread_count, \"region_az\", \"-\", \"cloud_region\", \"cloud_availability_zone\")"
+                  "x" 0  "y" 0)
+            (dict "title" "label_replace — namespace prefix"
+                  "expr"  "label_replace(jvm_thread_count, \"ns_kind\", \"$1\", \"k8s_namespace_name\", \"(.*)-.*\")"
+                  "x" 6  "y" 0)
+            (dict "title" "sort_desc(rate(jvm_class_loaded_total[1m]))"
+                  "expr"  "sort_desc(rate(jvm_class_loaded_total[1m]))"
+                  "x" 12 "y" 0)
+            (dict "title" "sort(jvm_thread_count)"
+                  "expr"  "sort(jvm_thread_count)"
+                  "x" 18 "y" 0)
+            (dict "title" "sort_by_label(jvm_thread_count, cloud_provider)"
+                  "expr"  "sort_by_label(jvm_thread_count, \"cloud_provider\")"
+                  "x" 0  "y" 8)
+            (dict "title" "sort_by_label_desc(jvm_thread_count, k8s_pod_name)"
+                  "expr"  "sort_by_label_desc(jvm_thread_count, \"k8s_pod_name\")"
+                  "x" 6  "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+          "targets": [{
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "expr": {{ $p.expr | toJson }},
+            "refId": "A", "legendFormat": ""
+          }]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

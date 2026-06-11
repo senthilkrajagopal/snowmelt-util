@@ -1,0 +1,16 @@
+{{- if .Values.observability.grafana.enabled }}
+# Same Rust dashboard, pointed at snowmelt's PromQL HTTP API
+# (datasource uid=`snowmelt`). Pair with the `-prometheus.yaml`
+# variant for side-by-side comparison.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-rust-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  rust-snowmelt.json: |-
+{{ .Files.Get "files/rust-snowmelt.json" | indent 4 }}
+{{- end }}

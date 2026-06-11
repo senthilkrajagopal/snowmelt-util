@@ -1,0 +1,81 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Sibling of `grafana-dashboard-snowmelt.yaml`, but pinned to the upstream
+# `prometheus` datasource. Metric names use the OTel→Prometheus naming
+# convention applied by the OTel collector / Prometheus OTel receiver:
+#   - counters  → `_total`
+#   - bytes     → `_bytes`
+#   - ratios    → `_ratio`
+#   - histograms split into `_bucket` / `_sum` / `_count`
+# Snowmelt's PromQL adapter preserves the raw OTel names, so the two
+# dashboards diverge on these suffixes even though the underlying series
+# are identical (same labels, same values).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-otel.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-otel",
+      "title": "Prometheus — OTel datagen overview",
+      "tags": ["prometheus", "otel"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $metrics := list
+            (dict "title" "Heartbeat — predetermined test series"     "expr" "test"                                              "x" 0  "y" 0  "kind" "stat")
+            (dict "title" "JVM — class loaded rate (events/s)"         "expr" "rate(jvm_class_loaded_total[1m])"                  "x" 6  "y" 0)
+            (dict "title" "MySQL — query rate (queries/s)"             "expr" "rate(mysql_query_count_total[1m])"                 "x" 12 "y" 0)
+            (dict "title" "Redis — commands processed rate (cmd/s)"    "expr" "rate(redis_commands_processed_total[1m])"          "x" 18 "y" 0)
+            (dict "title" "Postgres — commit rate (commits/s)"         "expr" "rate(postgresql_commits_total[1m])"                "x" 0  "y" 8)
+            (dict "title" "Mongo — operation rate (ops/s)"             "expr" "rate(mongodb_operation_count_total[1m])"           "x" 6  "y" 8)
+            (dict "title" "JVM — memory used (sawtooth)"              "expr" "jvm_memory_used_bytes"                              "x" 12 "y" 8)
+            (dict "title" "JVM — thread count (constant + noise)"    "expr" "jvm_thread_count"                                  "x" 18 "y" 8)
+            (dict "title" "Redis — memory used (sawtooth)"            "expr" "redis_memory_used_bytes"                            "x" 0  "y" 16)
+            (dict "title" "Process — memory usage"                    "expr" "process_memory_usage_bytes"                         "x" 6  "y" 16)
+            (dict "title" "Go — goroutines"                           "expr" "process_runtime_go_goroutines"                     "x" 12 "y" 16)
+            (dict "title" "JVM — CPU recent utilization (diurnal)"    "expr" "jvm_cpu_recent_utilization_ratio"                   "x" 18 "y" 16)
+            (dict "title" "Process — CPU utilization"                 "expr" "process_cpu_utilization_ratio"                      "x" 0  "y" 24)
+            (dict "title" "Mongo — health"                            "expr" "mongodb_health"                                    "x" 6  "y" 24)
+            (dict "title" "Kafka — consumer group lag"                "expr" "kafka_consumer_group_lag"                          "x" 12 "y" 24)
+            (dict "title" "Elasticsearch — cluster shards"            "expr" "elasticsearch_cluster_shards"                      "x" 18 "y" 24)
+            (dict "title" "JVM — GC duration (events/s)"              "expr" "rate(jvm_gc_duration_count[1m])"                    "x" 0  "y" 32)
+            (dict "title" "HTTP — server duration (events/s)"         "expr" "rate(http_server_duration_count[1m])"               "x" 6  "y" 32)
+            (dict "title" "HTTP — client duration (events/s)"         "expr" "rate(http_client_duration_count[1m])"               "x" 12 "y" 32)
+            (dict "title" "Spring — batch job duration (events/s)"    "expr" "rate(spring_batch_job_duration_count[1m])"          "x" 18 "y" 32)
+        }}
+        {{- range $i, $m := $metrics }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": {{ if eq (default "" $m.kind) "stat" }}"stat"{{ else }}"timeseries"{{ end }},
+          "title": {{ $m.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $m.x }}, "y": {{ $m.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $m.expr | toJson }},
+              "refId": "A",
+              "legendFormat": "{{`{{service_name}}`}} / {{`{{cloud_provider}}`}}"
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

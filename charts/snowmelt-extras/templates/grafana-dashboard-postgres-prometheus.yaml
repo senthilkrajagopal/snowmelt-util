@@ -1,0 +1,16 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for Postgres — Grafana.com template 9628
+# (postgres_exporter). Wired to the `prometheus` datasource UID.
+# Requires postgres_exporter to be scraped into Prom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-postgres-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  postgres-prometheus.json: |-
+{{ .Files.Get "files/postgres-prometheus.json" | indent 4 }}
+{{- end }}

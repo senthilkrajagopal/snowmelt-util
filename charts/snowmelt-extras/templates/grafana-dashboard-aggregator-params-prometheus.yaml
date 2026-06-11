@@ -1,0 +1,80 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 8-panel mirror of `grafana-dashboard-aggregator-params-snowmelt.yaml`
+# pinned to upstream Prometheus (uid=`prometheus`). Open both
+# side-by-side for visual diff. Prom-side gauge args use the
+# `_bytes` suffix per OpenMetrics convention; counter args (used
+# inside rate()) get `_total`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-aggregator-params-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-aggregator-params.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-aggregator-params",
+      "title": "Prometheus — aggregator params (Phase δ reference)",
+      "tags": ["prometheus", "promql", "aggregator-params", "phase-delta"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "topk(5, jvm_memory_used_bytes)"
+                  "expr"  "topk(5, jvm_memory_used_bytes)"
+                  "x" 0  "y" 0)
+            (dict "title" "bottomk(5, jvm_memory_used_bytes)"
+                  "expr"  "bottomk(5, jvm_memory_used_bytes)"
+                  "x" 6  "y" 0)
+            (dict "title" "topk(3, rate(jvm_class_loaded_total[1m]))"
+                  "expr"  "topk(3, rate(jvm_class_loaded_total[1m]))"
+                  "x" 12 "y" 0)
+            (dict "title" "quantile(0.95, jvm_memory_used_bytes)"
+                  "expr"  "quantile(0.95, jvm_memory_used_bytes)"
+                  "x" 18 "y" 0)
+            (dict "title" "quantile by (cloud_provider) (0.99, jvm_memory_used_bytes)"
+                  "expr"  "quantile by (cloud_provider) (0.99, jvm_memory_used_bytes)"
+                  "x" 0  "y" 8)
+            (dict "title" "stddev by (cloud_provider) (jvm_memory_used_bytes)"
+                  "expr"  "stddev by (cloud_provider) (jvm_memory_used_bytes)"
+                  "x" 6  "y" 8)
+            (dict "title" "stdvar by (cloud_provider) (jvm_memory_used_bytes)"
+                  "expr"  "stdvar by (cloud_provider) (jvm_memory_used_bytes)"
+                  "x" 12 "y" 8)
+            (dict "title" "count_values(\"th\", jvm_thread_count)"
+                  "expr"  "count_values(\"th\", jvm_thread_count)"
+                  "x" 18 "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

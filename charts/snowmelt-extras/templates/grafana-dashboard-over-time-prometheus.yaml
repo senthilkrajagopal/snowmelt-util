@@ -1,0 +1,97 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 11-panel Grafana dashboard exercising the Phase α `*_over_time`
+# family AGAINST upstream Prometheus. Pinned to datasource
+# uid=`prometheus`. Mirrors `grafana-dashboard-over-time-snowmelt.yaml`
+# panel-for-panel — open both side by side and the curves should
+# overlay (modulo the documented ~5% rate-extrapolation gap).
+#
+# Note: Prom's OTLP receiver applies OpenMetrics-style unit
+# suffixes to gauges. `jvm_memory_used` (byte gauge) is renamed
+# to `jvm_memory_used_bytes` on the prom side; `jvm_thread_count`
+# (unitless gauge) keeps its name. Counter metrics (`_total`) and
+# ratio gauges (`_ratio`) follow the same convention. The snowmelt
+# dashboard uses the un-suffixed names because snowmelt mirrors
+# the original OTLP attribute names verbatim.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-over-time-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-over-time.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-over-time",
+      "title": "Prometheus — *_over_time family (Phase α reference)",
+      "tags": ["prometheus", "promql", "over_time", "phase-alpha"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "avg_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "avg_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 0  "y" 0)
+            (dict "title" "min_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "min_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 6  "y" 0)
+            (dict "title" "max_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "max_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 12 "y" 0)
+            (dict "title" "sum_over_time(jvm_thread_count[5m])"
+                  "expr"  "sum_over_time(jvm_thread_count[5m])"
+                  "x" 18 "y" 0)
+            (dict "title" "count_over_time(jvm_thread_count[5m])"
+                  "expr"  "count_over_time(jvm_thread_count[5m])"
+                  "x" 0  "y" 8)
+            (dict "title" "last_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "last_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 6  "y" 8)
+            (dict "title" "first_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "first_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 12 "y" 8)
+            (dict "title" "present_over_time(jvm_thread_count[5m])"
+                  "expr"  "present_over_time(jvm_thread_count[5m])"
+                  "x" 18 "y" 8)
+            (dict "title" "stddev_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "stddev_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 0  "y" 16)
+            (dict "title" "stdvar_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "stdvar_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 6  "y" 16)
+            (dict "title" "mad_over_time(jvm_memory_used_bytes[5m])"
+                  "expr"  "mad_over_time(jvm_memory_used_bytes[5m])"
+                  "x" 12 "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

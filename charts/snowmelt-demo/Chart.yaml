@@ -1,0 +1,20 @@
+apiVersion: v2
+name: snowmelt-demo
+description: >
+  The OpenTelemetry Demo (Astronomy Shop) wired to the snowmelt observability
+  stack instead of its own backends: metrics -> snowmelt's OTel collector,
+  traces + logs -> Quickwit. Installs in its OWN namespace (e.g. `demo`) and
+  reaches the snowmelt release cross-namespace by service FQDN. The demo's
+  bundled Jaeger / Prometheus / Grafana / OpenSearch are disabled — snowmelt +
+  Quickwit + the snowmelt UI are the backend + viewing layer.
+type: application
+version: 0.1.0
+appVersion: "2.2.0"
+
+dependencies:
+  # Upstream OpenTelemetry Demo: ~20 instrumented microservices + a Locust load
+  # generator + a bundled OTel Collector. We override the collector's pipelines
+  # (see values.yaml) to ship telemetry to snowmelt + Quickwit.
+  - name: opentelemetry-demo
+    version: "0.40.9"
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts

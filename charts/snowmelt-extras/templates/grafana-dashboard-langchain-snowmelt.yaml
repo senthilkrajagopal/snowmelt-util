@@ -1,0 +1,18 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard 19623 (Langchain Observability) wired against
+# Snowmelt's own PromQL HTTP API (`datasource.uid: snowmelt`).
+# Companion to `grafana-dashboard-langchain-prometheus.yaml` —
+# same panels, different datasource, so an operator can A/B
+# compare Snowmelt's results against the in-cluster Prometheus.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-langchain-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  langchain-snowmelt.json: |-
+{{ .Files.Get "files/langchain-snowmelt.json" | indent 4 }}
+{{- end }}

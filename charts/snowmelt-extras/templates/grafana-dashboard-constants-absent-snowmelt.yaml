@@ -1,0 +1,67 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 6-panel Phase ζ constants + absent dashboard (snowmelt-pinned).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-constants-absent-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  snowmelt-constants-absent.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true, "id": null,
+      "uid": "snowmelt-constants-absent",
+      "title": "Snowmelt — constants + absent (Phase ζ)",
+      "tags": ["snowmelt", "promql", "constants", "absent", "phase-zeta"],
+      "timezone": "", "schemaVersion": 38, "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "pi() — π constant"
+                  "expr"  "pi()"
+                  "x" 0  "y" 0)
+            (dict "title" "time() — eval Unix seconds"
+                  "expr"  "time()"
+                  "x" 6  "y" 0)
+            (dict "title" "vector(42) — labelless constant"
+                  "expr"  "vector(42)"
+                  "x" 12 "y" 0)
+            (dict "title" "hour() — calendar hour at eval time"
+                  "expr"  "hour()"
+                  "x" 18 "y" 0)
+            (dict "title" "absent(jvm_thread_count) — should stay empty (data flowing)"
+                  "expr"  "absent(jvm_thread_count)"
+                  "x" 0  "y" 8)
+            (dict "title" "absent(does_not_exist) — synthetic 1 (no series)"
+                  "expr"  "absent(does_not_exist{job=\"snowmelt\"})"
+                  "x" 6  "y" 8)
+            (dict "title" "absent_over_time(does_not_exist[5m])"
+                  "expr"  "absent_over_time(does_not_exist[5m])"
+                  "x" 12 "y" 8)
+            (dict "title" "minute() — calendar minute at eval time"
+                  "expr"  "minute()"
+                  "x" 18 "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "snowmelt"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+          "targets": [{
+            "datasource": {"type": "prometheus", "uid": "snowmelt"},
+            "expr": {{ $p.expr | toJson }},
+            "refId": "A", "legendFormat": ""
+          }]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

@@ -1,0 +1,64 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 6-panel Phase η predictive + parameterized window-fn dashboard
+# (prometheus-pinned). Same exprs as the snowmelt-pinned dashboard
+# except the byte-gauge args use the `_bytes` suffix per
+# OpenMetrics convention.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-predictive-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-predictive.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true, "id": null,
+      "uid": "prometheus-predictive",
+      "title": "Prometheus — predictive + parameterized (Phase η reference)",
+      "tags": ["prometheus", "promql", "predictive", "phase-eta"],
+      "timezone": "", "schemaVersion": 38, "refresh": "30s",
+      "time": {"from": "now-30m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "predict_linear(jvm_thread_count[5m], 60)"
+                  "expr"  "predict_linear(jvm_thread_count[5m], 60)"
+                  "x" 0  "y" 0)
+            (dict "title" "predict_linear(jvm_memory_used_bytes[10m], 600)"
+                  "expr"  "predict_linear(jvm_memory_used_bytes[10m], 600)"
+                  "x" 6  "y" 0)
+            (dict "title" "quantile_over_time(0.5, jvm_thread_count[5m]) — median"
+                  "expr"  "quantile_over_time(0.5, jvm_thread_count[5m])"
+                  "x" 12 "y" 0)
+            (dict "title" "quantile_over_time(0.95, jvm_memory_used_bytes[10m]) — p95"
+                  "expr"  "quantile_over_time(0.95, jvm_memory_used_bytes[10m])"
+                  "x" 18 "y" 0)
+            (dict "title" "double_exponential_smoothing(jvm_thread_count[5m], 0.5, 0.5)"
+                  "expr"  "double_exponential_smoothing(jvm_thread_count[5m], 0.5, 0.5)"
+                  "x" 0  "y" 8)
+            (dict "title" "double_exponential_smoothing(jvm_memory_used_bytes[5m], 0.8, 0.3)"
+                  "expr"  "double_exponential_smoothing(jvm_memory_used_bytes[5m], 0.8, 0.3)"
+                  "x" 6  "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+          "targets": [{
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "expr": {{ $p.expr | toJson }},
+            "refId": "A", "legendFormat": ""
+          }]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

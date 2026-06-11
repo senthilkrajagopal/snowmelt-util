@@ -1,0 +1,73 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 5-panel Grafana dashboard exercising the Phase γ counter-aware
+# extras AGAINST upstream Prometheus. Pinned to datasource
+# uid=`prometheus`. Mirrors `grafana-dashboard-counter-extras-snowmelt.yaml`
+# panel-for-panel. The counter exprs (`changes`, `resets`) reference
+# `jvm_class_loaded_total` because Prom's OTLP receiver auto-suffixes
+# counters with `_total`; gauge exprs use bare names since gauges
+# are not renamed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-counter-extras-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-counter-extras.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-counter-extras",
+      "title": "Prometheus — counter-aware extras (Phase γ reference)",
+      "tags": ["prometheus", "promql", "counter-extras", "phase-gamma"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "delta(jvm_memory_used_bytes[5m]) — last−first on a gauge"
+                  "expr"  "delta(jvm_memory_used_bytes[5m])"
+                  "x" 0  "y" 0)
+            (dict "title" "idelta(jvm_memory_used_bytes[5m]) — last−prev only"
+                  "expr"  "idelta(jvm_memory_used_bytes[5m])"
+                  "x" 6  "y" 0)
+            (dict "title" "deriv(jvm_memory_used_bytes[5m]) — least-squares slope (units/s)"
+                  "expr"  "deriv(jvm_memory_used_bytes[5m])"
+                  "x" 12 "y" 0)
+            (dict "title" "changes(jvm_thread_count[5m]) — value-change count"
+                  "expr"  "changes(jvm_thread_count[5m])"
+                  "x" 18 "y" 0)
+            (dict "title" "resets(jvm_class_loaded_total[5m]) — counter-reset count"
+                  "expr"  "resets(jvm_class_loaded_total[5m])"
+                  "x" 0  "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

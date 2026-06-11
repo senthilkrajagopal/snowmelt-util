@@ -1,0 +1,72 @@
+{{- if .Values.datagen.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-datagen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: datagen
+data:
+  config.yaml: |
+    # OTLP/gRPC target — the chart's otel-collector. We funnel
+    # through the collector (not directly into snowmelt) so the
+    # same OTel pipeline can fork to Prometheus + Snowmelt and
+    # keep the two backends byte-identical.
+    #
+    # NOTE: every field below renders the values.yaml setting
+    # verbatim — no `| default ...` filter. That filter coerces
+    # explicit `false` / `0` to falsy and substitutes the default,
+    # which silently re-enabled otelgen when we tried to disable it
+    # for the streaming-only verification run. Defaults still come
+    # through values.yaml's own keys.
+    # Configurable OTLP target. Defaults to the otel-collector (the comparison
+    # topology). Override `datagen.otlpEndpoint` to send DIRECTLY to snowmelt —
+    # use the HEADLESS service so the sink resolves one client per pod and the
+    # firehose fans out across all of them (the collector then carries only the
+    # observability scrapes, so it can't be overwhelmed by the synthetic load).
+    otlp-endpoint: {{ .Values.datagen.otlpEndpoint | default (printf "http://%s-otel-collector.%s.svc.cluster.local:4317" .Values.snowmeltFullname .Release.Namespace) | quote }}
+    otlp-batch-size: {{ .Values.datagen.otlp.batchSize }}
+    otlp-flush-ms: {{ .Values.datagen.otlp.flushMs }}
+    # Datagen's OWN telemetry (the `datagen.submitted.datapoints` per-org
+    # counter) is pushed to the otel-collector — NOT snowmelt directly — so the
+    # collector's k8sattributes processor stamps k8s.pod.name (keeping each
+    # pod's counter distinct) before forwarding to snowmelt. Defaults to the
+    # collector; override `datagen.metricsOtlpEndpoint`. Omit to disable.
+    metrics-otlp-endpoint: {{ .Values.datagen.metricsOtlpEndpoint | default (printf "http://%s-otel-collector.%s.svc.cluster.local:4317" .Values.snowmeltFullname .Release.Namespace) | quote }}
+    # Wall-clock wait before either generator starts emitting.
+    # Gives snowmelt-app time to finish partition / NATS bootstrap
+    # before the first OTLP batch lands, so the early-traffic burst
+    # doesn't hit pods that are still mid-rebalance.
+    initial-delay-secs: {{ .Values.datagen.initialDelaySecs }}
+
+    # Streaming-datagen (cardinality stress).
+    streaming:
+      enabled: {{ .Values.datagen.streaming.enabled }}
+      streaming-pool-size: {{ .Values.datagen.streaming.poolSize }}
+      streaming-tick-interval-secs: {{ .Values.datagen.streaming.tickIntervalSecs }}
+      streaming-datapoints-per-tick: {{ .Values.datagen.streaming.datapointsPerTick }}
+      streaming-org-count: {{ .Values.datagen.streaming.orgCount }}
+      streaming-skip-histograms: {{ .Values.datagen.streaming.skipHistograms }}
+      streaming-churn-percent: {{ .Values.datagen.streaming.churnPercent }}
+      streaming-churn-period-secs: {{ .Values.datagen.streaming.churnPeriodSecs }}
+
+    # Langchain + go/jvm/node-exporter dashboard generator.
+    otelgen:
+      enabled: {{ .Values.datagen.otelgen.enabled }}
+      tenant-count: {{ .Values.datagen.otelgen.tenantCount }}
+      host-count: {{ .Values.datagen.otelgen.hostCount }}
+      streaming-tick-interval-secs: {{ .Values.datagen.otelgen.tickIntervalSecs }}
+      churn-percent: {{ .Values.datagen.otelgen.churnPercent }}
+      churn-window-minutes: {{ .Values.datagen.otelgen.churnWindowMinutes }}
+      growth-percent: {{ .Values.datagen.otelgen.growthPercent }}
+      growth-window-minutes: {{ .Values.datagen.otelgen.growthWindowMinutes }}
+
+    # Well-formed canonical-shape generator (visual-testing waveforms):
+    # 8 shapes × seriesCount series, each shape one metric name
+    # (shape_<name>) tagged series=chartNNN.
+    wellformed:
+      enabled: {{ .Values.datagen.wellformed.enabled }}
+      series-count: {{ .Values.datagen.wellformed.seriesCount }}
+      tick-interval-secs: {{ .Values.datagen.wellformed.tickIntervalSecs }}
+{{- end }}

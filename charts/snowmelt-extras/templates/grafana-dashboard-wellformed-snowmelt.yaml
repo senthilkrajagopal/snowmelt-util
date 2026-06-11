@@ -1,0 +1,16 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for the well-formed canonical shapes, wired against
+# the `snowmelt` datasource UID. Companion:
+# `grafana-dashboard-wellformed-prometheus.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-wellformed-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  wellformed-snowmelt.json: |-
+{{ .Files.Get "files/wellformed-snowmelt.json" | indent 4 }}
+{{- end }}

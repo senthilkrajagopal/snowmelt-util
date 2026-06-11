@@ -1,0 +1,27 @@
+apiVersion: v2
+name: snowmelt-extras
+description: >
+  Optional extras for Snowmelt — synthetic load generation (datagen) plus the
+  Prometheus + Grafana comparison/visualization stack. Installs ALONGSIDE the
+  `snowmelt` chart in the same namespace; reaches snowmelt's services by name
+  via the `snowmeltFullname` value.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  # Comparison backend — the OTel collector (in the snowmelt chart) can
+  # remote-write the same stream here so query results can be diffed against
+  # snowmelt. Prometheus also scrapes the snowmelt pods directly (by the
+  # `snowmelt_scrape` pod label — works cross-chart in the same namespace).
+  - name: prometheus
+    version: "~26.0"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: observability.prometheus.enabled
+
+  # Visualisation: Grafana with sidecar discovery for the prometheus datasource
+  # + the dashboard ConfigMaps shipped by this chart.
+  - name: grafana
+    version: "~8.0"
+    repository: https://grafana.github.io/helm-charts
+    condition: observability.grafana.enabled

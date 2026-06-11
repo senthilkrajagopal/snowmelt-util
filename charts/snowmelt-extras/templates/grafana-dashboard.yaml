@@ -1,0 +1,478 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana sidecar discovers any ConfigMap in the cluster carrying
+# `grafana_dashboard: "1"` and provisions every JSON value inside as a
+# dashboard. The dashboard below uses the standard `process_*` gauges
+# emitted by the `metrics-process` collector (CPU seconds, RSS / VSZ,
+# threads, FDs, uptime) — i.e. what every Rust binary built on the
+# `metrics` crate exports out of the box.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-rust
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  rust-process.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "percentage",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "orange", "value": 70},
+                  {"color": "red", "value": 90}
+                ]
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "id": 1,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "rate(process_cpu_seconds_total{job=\"snowmelt\",pod=~\"$pod\"}[1m]) * 100",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "CPU %",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "id": 2,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_resident_memory_bytes{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Resident memory (RSS)",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "purple"}]},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "id": 3,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_threads{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Threads",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]},
+              "unit": "s"
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "id": 4,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "time() - process_start_time_seconds{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Uptime",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisLabel": "",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": {"group": "A", "mode": "none"}
+              },
+              "unit": "percent"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "id": 5,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "rate(process_cpu_seconds_total{job=\"snowmelt\",pod=~\"$pod\"}[1m]) * 100",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "CPU % over time",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": {"group": "A", "mode": "none"}
+              },
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "id": 6,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_resident_memory_bytes{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "rss {{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_virtual_memory_bytes{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "vsz {{`{{`}}pod{{`}}`}}",
+              "refId": "B"
+            }
+          ],
+          "title": "Memory (RSS / VSZ)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "id": 7,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_threads{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Threads over time",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "id": 8,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_open_fds{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "open {{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "process_max_fds{job=\"snowmelt\",pod=~\"$pod\"}",
+              "legendFormat": "max {{`{{`}}pod{{`}}`}}",
+              "refId": "B"
+            }
+          ],
+          "title": "File descriptors (open / max)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {"group": "A", "mode": "normal"}
+              },
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "id": 9,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "snowmelt_disk_usage_bytes{job=\"snowmelt\",pod=~\"$pod\",kind!=\"total\"}",
+              "legendFormat": "{{`{{`}}kind{{`}}`}} {{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Disk usage — local-data-dir (stacked by kind)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "ops"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "id": 10,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "sum by (partition) (rate(snowmelt_ingest_wal_write_count{job=\"snowmelt\",pod=~\"$pod\",type=\"datapoint\",partition=~\"$partition\"}[1m]))",
+              "legendFormat": "writes p={{`{{`}}partition{{`}}`}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "sum by (partition) (rate(snowmelt_ingest_wal_read_count{job=\"snowmelt\",pod=~\"$pod\",type=\"datapoint\",partition=~\"$partition\"}[1m]))",
+              "legendFormat": "reads p={{`{{`}}partition{{`}}`}}",
+              "refId": "B"
+            }
+          ],
+          "title": "WAL throughput — datapoints (writes vs reads)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "ops"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "id": 11,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom"},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "sum by (partition) (rate(snowmelt_ingest_wal_write_count{job=\"snowmelt\",pod=~\"$pod\",type=\"metadata\",partition=~\"$partition\"}[1m]))",
+              "legendFormat": "writes p={{`{{`}}partition{{`}}`}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": "sum by (partition) (rate(snowmelt_ingest_wal_read_count{job=\"snowmelt\",pod=~\"$pod\",type=\"metadata\",partition=~\"$partition\"}[1m]))",
+              "legendFormat": "reads p={{`{{`}}partition{{`}}`}}",
+              "refId": "B"
+            }
+          ],
+          "title": "WAL throughput — metadata (writes vs reads)",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["snowmelt", "rust", "process"],
+      "templating": {
+        "list": [
+          {
+            "current": {"selected": true, "text": "All", "value": "$__all"},
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "definition": "label_values(process_cpu_seconds_total{job=\"snowmelt\"}, pod)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "pod",
+            "multi": true,
+            "name": "pod",
+            "options": [],
+            "query": {
+              "query": "label_values(process_cpu_seconds_total{job=\"snowmelt\"}, pod)",
+              "refId": "StandardVariableQuery"
+            },
+            "refresh": 2,
+            "regex": "",
+            "skipUrlSync": false,
+            "sort": 1,
+            "type": "query"
+          },
+          {
+            "current": {"selected": true, "text": "All", "value": "$__all"},
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "definition": "label_values(snowmelt_ingest_wal_write_count{job=\"snowmelt\"}, partition)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "partition",
+            "multi": true,
+            "name": "partition",
+            "options": [],
+            "query": {
+              "query": "label_values(snowmelt_ingest_wal_write_count{job=\"snowmelt\"}, partition)",
+              "refId": "StandardVariableQuery"
+            },
+            "refresh": 2,
+            "regex": "",
+            "skipUrlSync": false,
+            "sort": 3,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Snowmelt — Rust Process Metrics",
+      "uid": "snowmelt-rust-process",
+      "version": 1,
+      "weekStart": ""
+    }
+{{- end }}

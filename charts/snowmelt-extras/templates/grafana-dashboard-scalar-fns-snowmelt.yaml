@@ -1,0 +1,98 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 12-panel Grafana dashboard exercising the Phase β per-sample
+# scalar transforms AGAINST snowmelt's PromQL HTTP API. Pinned to
+# datasource uid=`snowmelt`. Pair with
+# `grafana-dashboard-scalar-fns-prometheus.yaml` for visual
+# side-by-side diff against upstream Prometheus.
+#
+# Picks one panel per fn family: math (abs / floor / clamp), trig
+# (sin / atan / deg), calendar (hour / month), composition
+# (abs(rate(...)), floor(sum by(...)())). Bare 13+15+9 = 37 fns
+# covered indirectly via these representatives + the per-fn
+# unit tests + `check_scalar_fns.py`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-scalar-fns-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  snowmelt-scalar-fns.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "snowmelt-scalar-fns",
+      "title": "Snowmelt — scalar functions (Phase β)",
+      "tags": ["snowmelt", "promql", "scalar-fns", "phase-beta"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "abs(deriv(jvm_memory_used[5m])) — math + composition"
+                  "expr"  "abs(deriv(jvm_memory_used[5m]))"
+                  "x" 0  "y" 0)
+            (dict "title" "floor(jvm_memory_used / 1024 / 1024) — MiB rounded"
+                  "expr"  "floor(jvm_memory_used)"
+                  "x" 6  "y" 0)
+            (dict "title" "clamp_max(jvm_memory_used, 5e8) — cap at 500MB"
+                  "expr"  "clamp_max(jvm_memory_used, 500000000)"
+                  "x" 12 "y" 0)
+            (dict "title" "ceil(avg_over_time(jvm_thread_count[5m]))"
+                  "expr"  "ceil(avg_over_time(jvm_thread_count[5m]))"
+                  "x" 18 "y" 0)
+            (dict "title" "sin(jvm_thread_count) — trig on thread count"
+                  "expr"  "sin(jvm_thread_count)"
+                  "x" 0  "y" 8)
+            (dict "title" "atan(deriv(jvm_memory_used[5m])) — trig + composition"
+                  "expr"  "atan(deriv(jvm_memory_used[5m]))"
+                  "x" 6  "y" 8)
+            (dict "title" "deg(rad(jvm_thread_count)) — round-trip identity"
+                  "expr"  "deg(rad(jvm_thread_count))"
+                  "x" 12 "y" 8)
+            (dict "title" "ln(clamp_min(jvm_memory_used, 1)) — log of bounded input"
+                  "expr"  "ln(clamp_min(jvm_memory_used, 1))"
+                  "x" 18 "y" 8)
+            (dict "title" "hour(jvm_thread_count) — hour of each sample's ts"
+                  "expr"  "hour(jvm_thread_count)"
+                  "x" 0  "y" 16)
+            (dict "title" "day_of_month(jvm_thread_count)"
+                  "expr"  "day_of_month(jvm_thread_count)"
+                  "x" 6  "y" 16)
+            (dict "title" "timestamp(jvm_thread_count) — ts as value"
+                  "expr"  "timestamp(jvm_thread_count)"
+                  "x" 12 "y" 16)
+            (dict "title" "sgn(deriv(jvm_memory_used[5m])) — sign of derivative"
+                  "expr"  "sgn(deriv(jvm_memory_used[5m]))"
+                  "x" 18 "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "snowmelt"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "snowmelt"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

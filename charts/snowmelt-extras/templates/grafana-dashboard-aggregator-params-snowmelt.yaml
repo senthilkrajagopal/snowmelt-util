@@ -1,0 +1,85 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 8-panel Grafana dashboard exercising the Phase δ aggregator
+# parameter extension AGAINST snowmelt's PromQL HTTP API. Pinned to
+# datasource uid=`snowmelt`. Pair with
+# `grafana-dashboard-aggregator-params-prometheus.yaml` for visual
+# side-by-side diff against upstream Prometheus.
+#
+# Each panel exercises a different aggregator + param shape:
+# topk/bottomk preserve input labels; count_values emits one series
+# per distinct value; quantile/stddev/stdvar collapse to 1 series
+# per group.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-aggregator-params-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  snowmelt-aggregator-params.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "snowmelt-aggregator-params",
+      "title": "Snowmelt — aggregator params (Phase δ)",
+      "tags": ["snowmelt", "promql", "aggregator-params", "phase-delta"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "topk(5, jvm_memory_used) — 5 largest mem-using series"
+                  "expr"  "topk(5, jvm_memory_used)"
+                  "x" 0  "y" 0)
+            (dict "title" "bottomk(5, jvm_memory_used) — 5 smallest"
+                  "expr"  "bottomk(5, jvm_memory_used)"
+                  "x" 6  "y" 0)
+            (dict "title" "topk(3, rate(jvm_class_loaded[1m])) — composition w/ rate"
+                  "expr"  "topk(3, rate(jvm_class_loaded[1m]))"
+                  "x" 12 "y" 0)
+            (dict "title" "quantile(0.95, jvm_memory_used) — p95 across all series"
+                  "expr"  "quantile(0.95, jvm_memory_used)"
+                  "x" 18 "y" 0)
+            (dict "title" "quantile by (cloud_provider) (0.99, jvm_memory_used)"
+                  "expr"  "quantile by (cloud_provider) (0.99, jvm_memory_used)"
+                  "x" 0  "y" 8)
+            (dict "title" "stddev by (cloud_provider) (jvm_memory_used)"
+                  "expr"  "stddev by (cloud_provider) (jvm_memory_used)"
+                  "x" 6  "y" 8)
+            (dict "title" "stdvar by (cloud_provider) (jvm_memory_used)"
+                  "expr"  "stdvar by (cloud_provider) (jvm_memory_used)"
+                  "x" 12 "y" 8)
+            (dict "title" "count_values(\"th\", jvm_thread_count) — series per distinct count"
+                  "expr"  "count_values(\"th\", jvm_thread_count)"
+                  "x" 18 "y" 8)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "snowmelt"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "snowmelt"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

@@ -1,0 +1,180 @@
+{
+  "annotations": { "list": [] },
+  "description": "snowmelt-app (Rust) process + emitted metrics. Source: OTel exporter on the snowmelt pods → snowmelt-otel-collector → prometheusremotewrite exporter → in-cluster Prometheus.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "uid": "rust-snowmelt",
+  "title": "Rust (Snowmelt)",
+  "tags": ["rust", "snowmelt-ds"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "snowmelt" },
+        "query": "label_values(process_resident_memory_bytes{service_name=\"snowmelt\"}, service_instance_id)",
+        "refresh": 2,
+        "regex": "",
+        "multi": true,
+        "includeAll": true,
+        "sort": 1,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "RSS",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(process_resident_memory_bytes{service_name=\"snowmelt\", service_instance_id=~\"$instance\"})", "legendFormat": "rss" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "CPU (cores)",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(process_cpu_seconds_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "cores" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2, "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Open FDs",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(process_open_fds{service_name=\"snowmelt\", service_instance_id=~\"$instance\"})", "legendFormat": "fds" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Threads",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(process_threads{service_name=\"snowmelt\", service_instance_id=~\"$instance\"})", "legendFormat": "threads" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Process uptime",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "time() - max(process_start_time_seconds{service_name=\"snowmelt\", service_instance_id=~\"$instance\"})", "legendFormat": "uptime" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "none", "colorMode": "value" }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Replicas reporting",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "count(up{service_name=\"snowmelt\"}) or vector(0)", "legendFormat": "pods" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "graphMode": "none", "colorMode": "value" }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Resident memory (RSS) per pod",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "process_resident_memory_bytes{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}", "legendFormat": "{{service_instance_id}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "CPU rate (cores) per pod",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "rate(process_cpu_seconds_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m])", "legendFormat": "{{service_instance_id}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 3 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Disk usage by kind (WAL / data / total)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (kind) (snowmelt_disk_usage_bytes{service_name=\"snowmelt\", service_instance_id=~\"$instance\"})", "legendFormat": "{{kind}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Rollup / aggregation / alerts throughput",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(snowmelt_rollups_output_count_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "rollups.output" },
+        { "refId": "B", "expr": "sum(rate(snowmelt_aggregations_output_count_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "aggregations.output" },
+        { "refId": "C", "expr": "sum(rate(snowmelt_alerts_sample_processed_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "alerts.processed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Refresh errors (rollup / aggregation / drop)",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(snowmelt_rollups_refresh_error_count_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "rollups.refresh.error" },
+        { "refId": "B", "expr": "sum(rate(snowmelt_aggregations_refresh_error_count_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "aggregations.refresh.error" },
+        { "refId": "C", "expr": "sum(rate(snowmelt_drops_refresh_error_count_total{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}[1m]))", "legendFormat": "drops.refresh.error" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Alerts queue depth (samples)",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "snowmelt" },
+      "targets": [
+        { "refId": "A", "expr": "snowmelt_alerts_queue_depth_samples{service_name=\"snowmelt\", service_instance_id=~\"$instance\"}", "legendFormat": "{{service_instance_id}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    }
+  ]
+}

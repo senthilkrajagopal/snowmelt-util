@@ -1,0 +1,97 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 10-panel Grafana dashboard exercising the across-series aggregate
+# layer: `sum`, `avg`, `min`, `max`, `count`, `group` with `by` /
+# `without`, plus aggregate-of-rate composition.
+#
+# Backed by Snowmelt's PromQL HTTP API (datasource UID `snowmelt`).
+# Datagen emits Prom-compliant underscored names (`cloud_provider`,
+# `k8s_namespace_name`, `jvm_memory_used`, …) so dashboards use bare
+# PromQL identifiers throughout — no `{__name__="..."}` workaround.
+# The translator still has a `_`↔`.` bridge to handle ANY real OTLP
+# data that lands with dotted attributes; for our datagen it's a no-op.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-aggregates
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  snowmelt-aggregates.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "snowmelt-aggregates",
+      "title": "Snowmelt — PromQL aggregates",
+      "tags": ["snowmelt", "promql", "aggregates"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- /*
+        10 panels in a 4-col × 3-row grid. Each is w=6, h=8 — fits
+        a standard 24-col Grafana page. Per-panel `expr` exercises
+        a different aggregate shape so any regression in the
+        translator / post-processing surfaces here first.
+        */ -}}
+        {{- $panels := list
+            (dict "title" "sum by (cloud_provider) of jvm_memory_used"
+                  "expr"  "sum by (cloud_provider) (jvm_memory_used)"
+                  "x" 0  "y" 0)
+            (dict "title" "sum by (k8s_namespace_name) of rate(mysql_query_count[1m])"
+                  "expr"  "sum by (k8s_namespace_name) (rate(mysql_query_count[1m]))"
+                  "x" 6  "y" 0)
+            (dict "title" "avg by (telemetry_sdk_language) of process_cpu_utilization"
+                  "expr"  "avg by (telemetry_sdk_language) (process_cpu_utilization)"
+                  "x" 12 "y" 0)
+            (dict "title" "max by (cloud_provider) of jvm_thread_count"
+                  "expr"  "max by (cloud_provider) (jvm_thread_count)"
+                  "x" 18 "y" 0)
+            (dict "title" "min by (cloud_provider) of redis_memory_used"
+                  "expr"  "min by (cloud_provider) (redis_memory_used)"
+                  "x" 0  "y" 8)
+            (dict "title" "count by (cloud_provider) of jvm_class_loaded series"
+                  "expr"  "count by (cloud_provider) (jvm_class_loaded)"
+                  "x" 6  "y" 8)
+            (dict "title" "sum without (k8s_pod_name) of postgresql_commits"
+                  "expr"  "sum without (k8s_pod_name) (postgresql_commits)"
+                  "x" 12 "y" 8)
+            (dict "title" "sum(rate(http_server_duration[1m])) — total event rate"
+                  "expr"  "sum(rate(http_server_duration[1m]))"
+                  "x" 18 "y" 8)
+            (dict "title" "avg by (service_name) of rate(redis_commands_processed[1m])"
+                  "expr"  "avg by (service_name) (rate(redis_commands_processed[1m]))"
+                  "x" 0  "y" 16)
+            (dict "title" "group by (cloud_provider) of kafka_consumer_group_lag — membership only"
+                  "expr"  "group by (cloud_provider) (kafka_consumer_group_lag)"
+                  "x" 6  "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "snowmelt"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "snowmelt"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

@@ -1,0 +1,97 @@
+# contabo-extras-values.yaml — Contabo override for the `snowmelt-extras` chart.
+# Install AFTER snowmelt, in the SAME namespace (default):
+#   helm install snowmelt-extras ./charts/snowmelt-extras -f contabo-extras-values.yaml
+#
+# On Contabo we run ONLY datagen from extras (the wellformed shape generator);
+# Prometheus + Grafana stay OFF — snowmelt is the only backend.
+
+# ── Reach the snowmelt release (cross-chart) ─────────────────────────────────
+# datagen → "<snowmeltFullname>-otel-collector:4317". Release is "snowmelt".
+snowmeltFullname: snowmelt
+snowmeltPromqlPort: 9092
+
+# ── No comparison/visualization backend on Contabo ───────────────────────────
+observability:
+  prometheus: { enabled: false }   # no Prometheus server (all CPU to snowmelt)
+  grafana:    { enabled: false }   # no Grafana
+
+# ── datagen: STREAMING FIREHOSE (load test) ──────────────────────────────────
+# Goal: drive the box to ~50% CPU / ~50% load. The streaming generator is now
+# rayon-parallelised (one pod uses its whole CPU budget) and the OTLP sink
+# interns metadata, so per-pod ship rate is bounded by batchSize/flushMs
+# (20000 / 0.25 s = 80k dp/s) rather than single-thread generation.
+#
+# Offered/shipped ≈ replicaCount × min(poolSize/tick, batchSize/flushMs).
+# Start: 2 × 80k/s = 160k dp/s ≈ 9.6M dp/min (~3× the old 6-pod 2.98M/min).
+# TUNE on the box: watch node CPU + load (cron monitor) and snowmelt's accepted
+# rate (the new "Datapoints ingested/sec" panel). Disk is the binding
+# constraint — ramp poolSize/replicaCount UP only while load stays ~<30.
+datagen:
+  enabled: true
+  # 1 replica while the OpenTelemetry Demo runs — frees disk I/O (the box's real
+  # constraint) so the demo's telemetry stands out and isn't starved by the
+  # firehose. Scale back up (6 ≈ ~370k dp/s / ~58% CPU) for pure ingest stress
+  # tests. SCALE WITH REPLICAS, not poolSize (per-pod caps ~85-100k dp/s).
+  replicaCount: 1
+  resources:
+    # request 1 (actual use ~1.2, bursts to limit). The old request of 3 blocked
+    # scheduling past ~4 replicas (node hit 97% cpu *requests* at ~42% real use).
+    requests: { cpu: "1", memory: 4Gi }
+    limits:   { cpu: "10", memory: 12Gi }
+  # Route the firehose THROUGH snowmelt's OTel collector so its `loadbalancing`
+  # exporter handles fan-out: it re-resolves the headless A-records every 30s and
+  # routes by `routing_key: streamID` (full per-series identity) across ALL
+  # snowmelt pods — fixing the gRPC connection-pinning skew (datagen's own sink
+  # resolves DNS once at connect, so direct-to-headless pins to one pod, esp.
+  # after a snowmelt restart gives new IPs). The collector forwarding is cheap;
+  # at datagen=1 (~60k dp/s) it's well within the memory_limiter. If you scale
+  # datagen back up to a heavy firehose, watch the collector's memory.
+  otlpEndpoint: "http://snowmelt-otel-collector.default.svc.cluster.local:4317"
+  otlp:
+    # Small batches submitted CONCURRENTLY (otlp_sink round-robins parallel
+    # exports across the per-pod clients) → tiny gRPC payloads at high
+    # throughput, no giant messages, no collector/snowmelt memory shock.
+    batchSize: 10000
+    flushMs: 250
+  # 120s (was 20): the sink resolves the headless DNS ONCE at connect time and
+  # round-robins across whatever pod IPs it sees. At 20s the StatefulSet pods
+  # weren't all Ready/in-DNS yet, so every datagen pod resolved backends=1 and
+  # pinned its whole firehose to a single snowmelt pod (snowmelt-2 ran 9.5 cores
+  # absorbing ~150k/s while the other 3 sat idle, capping total throughput).
+  # Waiting until all replicas are up makes the sink resolve backends=N → even
+  # fan-out. DURABILITY TODO: re-resolve periodically in the sink (like the
+  # collector's loadbalancing exporter) so a snowmelt restart mid-run re-spreads.
+  initialDelaySecs: 120
+  # ON for query tuning: 8 canonical waveforms (sine, sawtooth, square, …) each
+  # as `shape_<name>` (gauge) + `rate_shape_<name>` (counter), seriesCount series
+  # apiece tagged series=chartNNN. 100 series → shape_sine has 100 timeseries.
+  # Tiny (8×2×100 = 1600 series, 10s tick) vs the streaming firehose.
+  wellformed:
+    enabled: true
+    seriesCount: 100
+    tickIntervalSecs: 10
+  otelgen:    { enabled: false }
+  # Streaming firehose ON. poolSize/tick is the per-pod generation rate; keep it
+  # ≈ the ship ceiling so the buffer neither starves nor overflows.
+  streaming:
+    enabled: true
+    # poolSize = distinct series/pod ≈ the per-pod generation ceiling (~100k dp/s
+    # /pod). 100000 × 6 pods = 600k series. Bigger poolSize doesn't raise dp/s
+    # (gen-capped) — it only grows cardinality + the metadata warmup on restart
+    # (at 600k series a restart spikes published_missing to ~115k/15s for ~1-2
+    # min before settling to 0; node metrics briefly blank then recover).
+    poolSize: 100000
+    tickIntervalSecs: 1
+    # Tenants 1..orgCount. Datagen buckets each flush by org and ships one OTLP
+    # request per tenant carrying the SM_ACCESS_TOKEN header = org_id; snowmelt
+    # ingest now reads that header (api/src/ingest.rs) instead of hardcoding 0.
+    # So shard = hash(org_id, metric): with 3 orgs × 353 metrics ≈ 1k distinct
+    # shards hash-spread across 32 partitions → the ~14× per-partition skew
+    # flattens — WITHOUT changing the shard-routing model (see memory
+    # feedback_shard_routing_permanent). Kept at 3 ("org_id 1, 2, 3") for now.
+    orgCount: 3
+    skipHistograms: true
+    # Churn OFF: keep cardinality fixed so the test measures steady-state ingest
+    # (churn grows the fingerprint/metadata set → extra disk over time).
+    churnPercent: 0
+    churnPeriodSecs: 0

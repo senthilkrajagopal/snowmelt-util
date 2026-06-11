@@ -1,0 +1,13 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-mongodb-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  mongodb-prometheus.json: |-
+{{ .Files.Get "files/mongodb-prometheus.json" | indent 4 }}
+{{- end }}

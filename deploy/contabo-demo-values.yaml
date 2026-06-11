@@ -1,0 +1,26 @@
+# contabo-demo-values.yaml — Contabo override for the `snowmelt-demo` chart.
+#
+# Install in its OWN namespace, AFTER snowmelt (with quickwit ON):
+#   helm install snowmelt-demo ./charts/snowmelt-demo \
+#     -n demo --create-namespace -f contabo-demo-values.yaml
+#
+# RESOURCES: Option 1 — use the OpenTelemetry Demo's built-in per-component limits
+# (~6 GiB total, CPU best-effort). The box (48 vCPU / 251 GiB) has ample headroom,
+# so NO resource overrides here. (If a demo service ever gets CPU-starved under the
+# firehose, add a small global `opentelemetry-demo.default.resources.requests.cpu`.)
+#
+# The chart's values.yaml already pins the cross-namespace endpoints
+# (snowmelt-otel-collector.default:4317 for metrics, snowmelt-quickwit.default:7281
+# for traces+logs) and disables the demo's bundled Jaeger/Prometheus/Grafana/
+# OpenSearch — correct for the snowmelt release `snowmelt` in `default`.
+
+opentelemetry-demo:
+  components:
+    # Expose the Astronomy Shop UI (Envoy frontend-proxy) on a NodePort so you can
+    # drive manual traffic in addition to the load-generator. 30090 avoids the
+    # snowmelt UI's 30080.
+    frontend-proxy:
+      service:
+        type: NodePort
+        port: 8080
+        nodePort: 30090

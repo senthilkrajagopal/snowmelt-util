@@ -1,0 +1,16 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for NATS — Grafana.com template 14862 (NATS
+# Surveyor). Wired to the `prometheus` datasource UID. Requires the
+# nats_exporter / nats-surveyor metrics to be scraped into Prom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-nats-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  nats-prometheus.json: |-
+{{ .Files.Get "files/nats-prometheus.json" | indent 4 }}
+{{- end }}

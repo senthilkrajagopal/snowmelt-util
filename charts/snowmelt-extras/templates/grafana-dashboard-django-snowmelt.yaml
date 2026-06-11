@@ -1,0 +1,15 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for django, wired against the
+# `snowmelt` datasource UID. Companion: `grafana-dashboard-django-prometheus.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-django-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  django-snowmelt.json: |-
+{{ .Files.Get "files/django-snowmelt.json" | indent 4 }}
+{{- end }}

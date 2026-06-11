@@ -1,0 +1,168 @@
+# contabo-values.yaml — Contabo box override for the `snowmelt` chart
+# (48 vCPU / 251 GiB / 2× MX500 SATA, single-node k3s; data on sdb).
+#
+# Since the chart split, datagen + Prometheus + Grafana live in the
+# `snowmelt-extras` chart. Deploy BOTH (same namespace):
+#   helm install snowmelt        ./charts/snowmelt        -f contabo-values.yaml
+#   helm install snowmelt-extras ./charts/snowmelt-extras -f contabo-extras-values.yaml
+#  (upgrade: same with `helm upgrade`.)
+#
+# Storage uses k3s's default `local-path` (empty storageClass) → sdb.
+#
+# Measure throughput (Prometheus is OFF, so read it at the source):
+#   collector → snowmelt rate (dp/s actually accepted):
+#     kubectl exec deploy/snowmelt-otel-collector -- \
+#       wget -qO- localhost:8888/metrics | grep otelcol_exporter_sent_metric_points
+#   Engine-side stored rate (proves persistence, not just receipt):
+#     kubectl exec snowmelt-0 -- snowmelt-cli --endpoint http://localhost:8815 \
+#       -c "SELECT count(*) FROM metric WHERE metric='<series-metric>';"  (twice, 60s apart)
+
+# ── Strip the stack down to the metric-ingest path ──────────────────────────
+# Prometheus + Grafana + datagen moved to the snowmelt-extras chart — on Contabo
+# we install extras with ONLY datagen on (see contabo-extras-values.yaml).
+# Quickwit ON — it's the log/trace store for the OpenTelemetry Demo (snowmelt-demo
+# chart, `demo` namespace). The demo's collector ships traces+logs straight to
+# Quickwit's OTLP endpoint (snowmelt-quickwit.default:7281), which the UI's
+# Logs/Traces pages query. otelLogsCollector (snowmelt's OWN per-node filelog
+# DaemonSet) stays OFF — it parses every snowmelt-pod's stdout and is a real CPU
+# draw under the firehose; the demo's app logs don't need it.
+quickwit:          { enabled: true }
+otelLogsCollector: { enabled: false }
+
+# ── Node metrics → snowmelt (standalone node-exporter, no Prometheus server) ──
+# The prometheus subchart's server is mandatory (no server.enabled gate in v26),
+# so to get node_* into snowmelt WITHOUT standing up a Prometheus backend we use
+# snowmelt's own lightweight node-exporter DaemonSet (templates/node-exporter-
+# daemonset.yaml). The OTel collector scrapes it (job_name: node-exporter) →
+# node_cpu/mem/filesystem/disk/network/load land in snowmelt + the UI.
+nodeExporter:
+  enabled: true
+
+# ── snowmelt engine: scale + tune for ingest throughput ─────────────────────
+# Images are built ON the box and imported into k3s containerd, so never pull
+# from a registry. The chart default is `Always`, which 404s on Docker Hub and
+# lands every snowmelt-N pod in ImagePullBackOff. (datagen/ui already default
+# to Never in the chart; this is the one component that needs the override.)
+image:
+  pullPolicy: Never
+# 4 fat pods rather than many small ones: fewer cross-pod dp_files/NATS hops
+# and less single-disk WAL contention. Try 4 → 6 → 8 and compare.
+replicaCount: 4
+resources:
+  requests: { cpu: "6",  memory: 20Gi }   # trimmed from 24 to make room for ClickHouse
+  limits:   { cpu: "10", memory: 32Gi }
+persistence:
+  storageClass: ""     # k3s default = local-path (local NVMe, fastest)
+  size: 80Gi           # WAL + raw dp tier per pod; bump if it fills under load
+
+config:
+  global:
+    # partition-count == replicaCount (4): with the round-robin placement
+    # (cluster.placement default), partition p → pod (p % replicas), giving an
+    # EXACTLY-even 1-partition-per-pod split. (HRW would skew — 16/4 → [1,3,6,6],
+    # 32/4 → [6,9,10,7]; no HRW count gives a perfect split. Round-robin is the
+    # right default since rebalance is disabled.) Fewer, larger partitions = less
+    # flush/compaction/file overhead. CHANGING THIS RESHAPES ROUTING — needs a
+    # clean redeploy / PVC wipe.
+    partition-count: 4
+    s3:
+      # Engine fans out more concurrent writes to MinIO under heavy
+      # flush/compaction (MinIO ceiling raised below to stay above this).
+      # Bumped to 1024 for the firehose load test: many tiny vortex files →
+      # query/compaction bursts need a much wider object-store fan-out.
+      max-concurrent-requests: 1024
+  wal:
+    # Fewer, larger group-fsyncs → higher write throughput. ≤1s replay on
+    # crash, which is fine for a load test. (100ms → 1000ms.)
+    fsync-interval-ms: 1000
+  jobs:
+    # Collect MORE per flush -> fewer, larger vortex files + fewer snowlake
+    # registrations (each registration is a sync DuckDB commit on the
+    # IOPS-bound disk). Drain at 1M pending OR every 15s (was 250k / 5s) — both
+    # the size trigger AND the time trigger raised so it batches more.
+    datapoint-flush-interval-secs: 15
+    datapoint-flush-max-records: 1000000
+    datapoint-flush-check-interval-ms: 1000
+  dp-files:
+    # Consolidate dp → dp_5m in bigger chunks so the dp tier doesn't drown
+    # in tiny files during a firehose.
+    eager-compaction-threshold-bytes: 268435456   # 256 MiB
+
+# ── OTel collector: don't let the datagen→collector→snowmelt hop be the cap ──
+# Stays in the snowmelt chart; datagen (in snowmelt-extras) sends OTLP here.
+otelCollector:
+  enabled: true
+  kubernetes: { enabled: true }    # k8s_cluster metrics (pod/node/workload phases,
+                                   # node conditions, allocatable) + k8sobjects events
+  # Tag snowmelt's self-metrics with k8s.pod.name (per-pod, via connection IP)
+  # so per-replica ingest counters don't collide into one garbage series.
+  k8sAttributes: { enabled: true }
+  replicas: 4                      # datagen load-balances across these
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits:   { cpu: "4", memory: 10Gi }
+  processors:
+    batch:
+      sendBatchSize: 10000         # bigger batches → fewer, larger sends to snowmelt
+      timeout: 5s
+    memoryLimiter:
+      # 10Gi limit. Raised from 4500 — under the firehose (concentrated on the
+      # active collector by gRPC connection stickiness) the limiter was refusing
+      # ~21M points incl. the node/clickhouse scrapes, blanking the dashboards.
+      limitMib: 8000
+      spikeLimitMib: 2000
+  exporters:
+    prometheusRemoteWrite: { enabled: false }  # no Prometheus fork — snowmelt only
+    snowmelt:              { enabled: true }
+
+# ── MinIO: compacted-tier object store; raise concurrency + resources ───────
+minio:
+  enabled: true
+  apiRequestsMax: 2000             # was 200 — high write concurrency under load
+  apiRequestsDeadline: 30s
+  resources:
+    requests: { cpu: "3", memory: 6Gi }
+    limits:   { cpu: "8", memory: 24Gi }
+  persistence:
+    storageClass: ""
+    size: 200Gi                    # 5m/1h compacted tiers accumulate here
+
+# ── NATS: metadata bus + dp_files event volume scales with ingest ───────────
+nats:
+  enabled: true
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "4", memory: 6Gi }
+
+# ── Postgres (admin/metadata) — modest bump ─────────────────────────────────
+postgres:
+  enabled: true
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 4Gi }
+
+# ── ClickHouse: central metric + file metadata store (single replica) ───────
+# Consumes snowmelt.md.* (metric metadata) and DP_FILES (file metadata) off
+# NATS into one cluster-wide store you can query independent of the owners.
+clickhouse:
+  enabled: true
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits:   { cpu: "6", memory: 16Gi }
+  persistence:
+    storageClass: ""
+    size: 50Gi
+
+# ── snowmelt UI — exposed via NodePort on the node's public IP ───────────────
+# NOTE: this publishes the UI on the public internet behind its own login.
+# Set a strong admin password via the ui-auth Secret (never commit endpoints
+# or credentials here — anything committed must be treated as burned).
+ui:
+  enabled: true
+  service:
+    type: NodePort
+    nodePort: 30080
+
+# ── datagen: moved to the snowmelt-extras chart ─────────────────────────────
+# The wellformed-shape generator now lives in snowmelt-extras and sends OTLP to
+# this chart's otel-collector cross-chart. See contabo-extras-values.yaml.

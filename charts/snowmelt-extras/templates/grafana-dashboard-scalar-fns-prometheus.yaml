@@ -1,0 +1,92 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 12-panel mirror of `grafana-dashboard-scalar-fns-snowmelt.yaml`
+# pinned to upstream Prometheus (uid=`prometheus`). Open both
+# side-by-side for visual diff. Exprs are byte-identical between
+# the two dashboards; both backends receive the same OTLP stream
+# so the curves should overlay.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-scalar-fns-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-scalar-fns.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-scalar-fns",
+      "title": "Prometheus — scalar functions (Phase β reference)",
+      "tags": ["prometheus", "promql", "scalar-fns", "phase-beta"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "abs(deriv(jvm_memory_used_bytes[5m]))"
+                  "expr"  "abs(deriv(jvm_memory_used_bytes[5m]))"
+                  "x" 0  "y" 0)
+            (dict "title" "floor(jvm_memory_used_bytes)"
+                  "expr"  "floor(jvm_memory_used_bytes)"
+                  "x" 6  "y" 0)
+            (dict "title" "clamp_max(jvm_memory_used_bytes, 5e8)"
+                  "expr"  "clamp_max(jvm_memory_used_bytes, 500000000)"
+                  "x" 12 "y" 0)
+            (dict "title" "ceil(avg_over_time(jvm_thread_count[5m]))"
+                  "expr"  "ceil(avg_over_time(jvm_thread_count[5m]))"
+                  "x" 18 "y" 0)
+            (dict "title" "sin(jvm_thread_count)"
+                  "expr"  "sin(jvm_thread_count)"
+                  "x" 0  "y" 8)
+            (dict "title" "atan(deriv(jvm_memory_used_bytes[5m]))"
+                  "expr"  "atan(deriv(jvm_memory_used_bytes[5m]))"
+                  "x" 6  "y" 8)
+            (dict "title" "deg(rad(jvm_thread_count))"
+                  "expr"  "deg(rad(jvm_thread_count))"
+                  "x" 12 "y" 8)
+            (dict "title" "ln(clamp_min(jvm_memory_used_bytes, 1))"
+                  "expr"  "ln(clamp_min(jvm_memory_used_bytes, 1))"
+                  "x" 18 "y" 8)
+            (dict "title" "hour(jvm_thread_count)"
+                  "expr"  "hour(jvm_thread_count)"
+                  "x" 0  "y" 16)
+            (dict "title" "day_of_month(jvm_thread_count)"
+                  "expr"  "day_of_month(jvm_thread_count)"
+                  "x" 6  "y" 16)
+            (dict "title" "timestamp(jvm_thread_count)"
+                  "expr"  "timestamp(jvm_thread_count)"
+                  "x" 12 "y" 16)
+            (dict "title" "sgn(deriv(jvm_memory_used_bytes[5m]))"
+                  "expr"  "sgn(deriv(jvm_memory_used_bytes[5m]))"
+                  "x" 18 "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

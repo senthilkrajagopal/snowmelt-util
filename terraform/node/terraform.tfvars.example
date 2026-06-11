@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+# All values below are OPTIONAL except allowed_cidr (REQUIRED — no default,
+# so a stranger's IP can never end up baked into the repo).
+
+# region            = "us-east-2"
+# availability_zone = "us-east-2c"
+# name              = "snowmelt-dev"
+# instance_type     = "m7g.8xlarge"
+
+# Spot vs on-demand
+# use_spot       = true
+# spot_max_price = "0.50"   # set "" to cap at the on-demand price
+
+# Existing EC2 key pair name (must already exist in the region)
+# key_name = "m7g-us-east-2c"
+
+# REQUIRED: lock ingress to YOUR current public IP. Find it with:
+#   curl -s https://checkip.amazonaws.com
+allowed_cidr  = "203.0.113.7/32"
+# ingress_ports = [22, 80, 443, 30080, 30443]
+
+# root_volume_size = 50

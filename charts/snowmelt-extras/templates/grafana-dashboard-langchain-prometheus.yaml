@@ -1,0 +1,22 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard 19623 (Langchain Observability) wired against
+# the in-chart Prometheus datasource. Pre-processed: every
+# `datasource.uid` reference in the JSON has been rewritten to
+# `prometheus`, the canonical UID set in `grafana-datasource.yaml`.
+#
+# Companion file: `grafana-dashboard-langchain-snowmelt.yaml` is
+# the same panels rewritten for `datasource.uid: snowmelt` so an
+# operator can A/B-compare Snowmelt's PromQL HTTP API against the
+# in-cluster Prometheus.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-langchain-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  langchain-prometheus.json: |-
+{{ .Files.Get "files/langchain-prometheus.json" | indent 4 }}
+{{- end }}

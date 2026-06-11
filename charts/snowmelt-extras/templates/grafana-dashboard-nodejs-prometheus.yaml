@@ -1,0 +1,15 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for nodejs, wired against the
+# `prometheus` datasource UID. Companion: `grafana-dashboard-nodejs-snowmelt.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-nodejs-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  nodejs-prometheus.json: |-
+{{ .Files.Get "files/nodejs-prometheus.json" | indent 4 }}
+{{- end }}

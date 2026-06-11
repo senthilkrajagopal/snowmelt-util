@@ -1,0 +1,43 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana sidecar discovers any ConfigMap in the cluster carrying
+# `grafana_datasource: "1"` and feeds it as a provisioned datasource.
+# We point the default `Prometheus` datasource at the in-chart
+# Prometheus server (named `<release>-prometheus-server` by the
+# upstream chart).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-datasource
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_datasource: "1"
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        # UID pinned because every dashboard panel references
+        # `"datasource": {"type": "prometheus", "uid": "prometheus"}`.
+        # Without this, Grafana auto-assigns a hash-style UID and panels
+        # fail to resolve their datasource.
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ .Release.Name }}-prometheus-server.{{ .Release.Namespace }}.svc.cluster.local
+        isDefault: true
+        editable: true
+      - name: Snowmelt-PromQL
+        # Snowmelt's own PromQL-compatible HTTP API, served by the
+        # `query` crate inside each snowmelt pod on port 9092. The
+        # `/promql/` URL prefix lets Snowmelt host other query
+        # surfaces alongside (e.g. SMQL) on the same port without
+        # path collisions. UID pinned for the same dashboard-resolves
+        # reason as the upstream Prometheus datasource above.
+        uid: snowmelt
+        type: prometheus
+        access: proxy
+        url: http://{{ .Values.snowmeltFullname }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.snowmeltPromqlPort }}/promql
+        isDefault: false
+        editable: true
+{{- end }}

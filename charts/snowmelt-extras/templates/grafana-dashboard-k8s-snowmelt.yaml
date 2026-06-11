@@ -1,0 +1,15 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for k8s, wired against the
+# `snowmelt` datasource UID. Companion: `grafana-dashboard-k8s-prometheus.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-k8s-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  k8s-snowmelt.json: |-
+{{ .Files.Get "files/k8s-snowmelt.json" | indent 4 }}
+{{- end }}

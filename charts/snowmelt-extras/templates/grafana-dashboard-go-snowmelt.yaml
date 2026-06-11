@@ -1,0 +1,15 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for go, wired against the
+# `snowmelt` datasource UID. Companion: `grafana-dashboard-go-prometheus.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-go-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  go-snowmelt.json: |-
+{{ .Files.Get "files/go-snowmelt.json" | indent 4 }}
+{{- end }}

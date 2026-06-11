@@ -1,0 +1,93 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# 11-panel Grafana dashboard exercising the Phase α `*_over_time`
+# family AGAINST snowmelt's PromQL HTTP API. Pinned to datasource
+# uid=`snowmelt`. Pair with `grafana-dashboard-over-time-prometheus.yaml`
+# for visual side-by-side diff against upstream Prometheus.
+#
+# Each panel runs one of the 11 over_time fns over a sensible
+# datagen metric. Open both dashboards and the per-panel curves
+# should overlay (modulo the documented ~5% rate-extrapolation gap
+# from `query/translations.md` § Known semantic gaps).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-over-time-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  snowmelt-over-time.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "snowmelt-over-time",
+      "title": "Snowmelt — *_over_time family (Phase α)",
+      "tags": ["snowmelt", "promql", "over_time", "phase-alpha"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "avg_over_time(jvm_memory_used[5m])"
+                  "expr"  "avg_over_time(jvm_memory_used[5m])"
+                  "x" 0  "y" 0)
+            (dict "title" "min_over_time(jvm_memory_used[5m])"
+                  "expr"  "min_over_time(jvm_memory_used[5m])"
+                  "x" 6  "y" 0)
+            (dict "title" "max_over_time(jvm_memory_used[5m])"
+                  "expr"  "max_over_time(jvm_memory_used[5m])"
+                  "x" 12 "y" 0)
+            (dict "title" "sum_over_time(jvm_thread_count[5m])"
+                  "expr"  "sum_over_time(jvm_thread_count[5m])"
+                  "x" 18 "y" 0)
+            (dict "title" "count_over_time(jvm_thread_count[5m])"
+                  "expr"  "count_over_time(jvm_thread_count[5m])"
+                  "x" 0  "y" 8)
+            (dict "title" "last_over_time(jvm_memory_used[5m])"
+                  "expr"  "last_over_time(jvm_memory_used[5m])"
+                  "x" 6  "y" 8)
+            (dict "title" "first_over_time(jvm_memory_used[5m])"
+                  "expr"  "first_over_time(jvm_memory_used[5m])"
+                  "x" 12 "y" 8)
+            (dict "title" "present_over_time(jvm_thread_count[5m])"
+                  "expr"  "present_over_time(jvm_thread_count[5m])"
+                  "x" 18 "y" 8)
+            (dict "title" "stddev_over_time(jvm_memory_used[5m])"
+                  "expr"  "stddev_over_time(jvm_memory_used[5m])"
+                  "x" 0  "y" 16)
+            (dict "title" "stdvar_over_time(jvm_memory_used[5m])"
+                  "expr"  "stdvar_over_time(jvm_memory_used[5m])"
+                  "x" 6  "y" 16)
+            (dict "title" "mad_over_time(jvm_memory_used[5m])"
+                  "expr"  "mad_over_time(jvm_memory_used[5m])"
+                  "x" 12 "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "snowmelt"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "snowmelt"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

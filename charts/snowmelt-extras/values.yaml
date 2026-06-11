@@ -1,0 +1,191 @@
+# snowmelt-extras — optional load-gen + observability stack, split out of the
+# main snowmelt chart. Install ALONGSIDE snowmelt in the SAME namespace:
+#
+#   helm install snowmelt        ./charts/snowmelt        -f <snowmelt values>
+#   helm install snowmelt-extras ./charts/snowmelt-extras -f <extras values>
+#
+# Same namespace is required: datagen reaches snowmelt's otel-collector by DNS,
+# and Prometheus discovers the snowmelt pods by the `snowmelt_scrape` pod label.
+
+# ── How to reach the snowmelt release (cross-chart addressing) ───────────────
+# datagen → "<snowmeltFullname>-otel-collector:4317"; the Grafana Snowmelt-PromQL
+# datasource → "<snowmeltFullname>:<snowmeltPromqlPort>/promql". Set these to the
+# snowmelt release's fullname + PromQL port. Defaults match `helm install snowmelt`.
+snowmeltFullname: snowmelt
+snowmeltPromqlPort: 9092
+
+# ── Observability toggles (gate the prometheus + grafana sub-charts + the
+#    grafana-dashboard ConfigMaps) ────────────────────────────────────────────
+observability:
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true
+
+# ── datagen ──────────────────────────────────────────────────────────────────
+# The synthetic OTLP/gRPC data generator. A separate Deployment that funnels
+# through the snowmelt chart's otel-collector (cross-chart, via snowmeltFullname)
+# so the OTel pipeline forks to Snowmelt (+ optionally Prometheus).
+datagen:
+  # On — running the well-formed canonical-shape generator ONLY
+  # (streaming + otelgen disabled below). Emits 8 textbook waveforms
+  # × 100 series each for visual / rendering tests. Flip the
+  # per-generator toggles below to change what runs.
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: snowmelt-datagen
+    tag: latest
+    pullPolicy: Never
+  rustLog: info
+  # Minimal resource budget — the otelgen runner is the heavy
+  # part and still fits comfortably under 500m CPU / 512Mi.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  otlp:
+    batchSize: 5000
+    flushMs: 1000
+  # Wall-clock seconds to wait before either generator starts
+  # emitting. Lets snowmelt-app finish its partition / NATS
+  # bootstrap so the first OTLP batch doesn't hit pods still
+  # mid-rebalance. Set to 0 to start emitting immediately.
+  initialDelaySecs: 20
+  # Well-formed canonical-shape generator (visual-testing waveforms).
+  # 8 shapes (constant, linear, sine, sawtooth, square, triangle,
+  # step, impulse), each one metric `shape_<name>` with seriesCount
+  # series tagged series=chartNNN. Deterministic from wall-clock —
+  # no seed, continuous across restarts.
+  wellformed:
+    enabled: true
+    seriesCount: 100
+    tickIntervalSecs: 10
+  streaming:
+    # Streaming datagen — cardinality stress. poolSize series boot at
+    # t=0; every churnPeriodSecs the rotation replaces churnPercent% of
+    # slots with fresh series. skipHistograms keeps "1 slot ≈ 1
+    # fingerprint". OFF — running well-formed shapes only.
+    enabled: false
+    poolSize: 10000
+    tickIntervalSecs: 1
+    datapointsPerTick: 2000
+    orgCount: 1
+    skipHistograms: true
+    churnPercent: 10
+    churnPeriodSecs: 60
+  otelgen:
+    # Off — focusing on the Rust app's OTLP push path without the
+    # synthetic stream's cardinality drowning out snowmelt-* series.
+    # Flip to `true` to repopulate the langchain / go / jvm / nodejs /
+    # minio / mongodb dashboards.
+    enabled: false
+    tenantCount: 1
+    hostCount: 10
+    tickIntervalSecs: 5
+    churnPercent: 0
+    churnWindowMinutes: 2
+    growthPercent: 0
+    growthWindowMinutes: 2
+
+# ── Prometheus sub-chart values ──────────────────────────────────────────────
+prometheus:
+  alertmanager:
+    enabled: false
+  pushgateway:
+    enabled: false
+  # Node host metrics. DISABLED here — the snowmelt chart ships its own
+  # standalone node-exporter (also hostNetwork :9100); running both would clash
+  # on the host port. snowmelt's node-exporter feeds snowmelt directly; this
+  # Prometheus gets node metrics via the collector's remote-write (or add a
+  # scrape job pointing at snowmelt's node-exporter service).
+  prometheus-node-exporter:
+    enabled: false
+  # Workload state metrics (kube_pod_*/kube_deployment_*/…). Drives template
+  # variables + many panels of the standard cadvisor+KSM Grafana dashboards.
+  kube-state-metrics:
+    enabled: true
+
+  server:
+    persistentVolume:
+      # Survives pod restart / chart upgrade so the comparison-with-snowmelt
+      # baseline isn't wiped on a prometheus-server bounce.
+      enabled: true
+      size: 20Gi
+      accessModes:
+        - ReadWriteOnce
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+    # Required to land OTel-Collector remote-write traffic (and keep
+    # web.enable-lifecycle so the configmap-reload sidecar's /-/reload works).
+    extraFlags:
+      - web.enable-lifecycle
+      - web.enable-remote-write-receiver
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    # Short retention — the comparison run is a short-lived diff session.
+    retention: 6h
+
+  # Scrape the snowmelt pods directly (cross-chart, same namespace) by the
+  # `snowmelt_scrape` pod label. Also rewrites the NATS sidecar's `gnatsd_*`
+  # metric prefix to `nats_*` so the standard NATS dashboard resolves.
+  extraScrapeConfigs: |
+    - job_name: snowmelt
+      scrape_interval: 10s
+      scrape_timeout: 8s
+      metrics_path: /metrics
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_snowmelt_scrape]
+          action: keep
+          regex: "true"
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          action: keep
+          regex: metrics
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'gnatsd_(.+)'
+          target_label: __name__
+          replacement: 'nats_${1}'
+
+# ── Grafana sub-chart values ─────────────────────────────────────────────────
+grafana:
+  adminUser: admin
+  # Pinned so a redeploy doesn't trigger Grafana's "default password detected"
+  # first-login prompt (only appears when adminPassword is the chart default).
+  adminPassword: vilink
+  service:
+    type: ClusterIP
+    port: 80
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /tmp/dashboards
+      searchNamespace: ALL
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      searchNamespace: ALL

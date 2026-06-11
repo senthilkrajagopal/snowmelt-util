@@ -1,0 +1,15 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for minio, wired against the
+# `snowmelt` datasource UID. Companion: `grafana-dashboard-minio-prometheus.yaml`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-minio-snowmelt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  minio-snowmelt.json: |-
+{{ .Files.Get "files/minio-snowmelt.json" | indent 4 }}
+{{- end }}

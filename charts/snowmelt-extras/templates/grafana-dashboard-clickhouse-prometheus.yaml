@@ -1,0 +1,17 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Grafana dashboard for ClickHouse — Grafana.com template 882. Wired
+# to the `prometheus` datasource UID. Requires a clickhouse-exporter
+# (or the built-in `/metrics` Prometheus endpoint on the
+# clickhouse-server) to be scraped into Prom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-clickhouse-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  clickhouse-prometheus.json: |-
+{{ .Files.Get "files/clickhouse-prometheus.json" | indent 4 }}
+{{- end }}

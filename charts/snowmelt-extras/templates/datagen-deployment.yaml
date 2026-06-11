@@ -1,0 +1,52 @@
+{{- if .Values.datagen.enabled }}
+# Snowmelt synthetic data generator. Was an in-process thread inside
+# `snowmelt-app` (ordinal-0 only). Lifted into a standalone Deployment
+# so:
+#   - it can pick a fresh seed at every restart (different fingerprints
+#     across pod restarts → no phantom counter resets at query time);
+#   - every replica emits independent series (cardinality scales with
+#     replicaCount);
+#   - resource usage stays out of the snowmelt-app container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-datagen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: datagen
+spec:
+  replicas: {{ .Values.datagen.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "snowmelt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: datagen
+  template:
+    metadata:
+      labels:
+        {{- include "snowmelt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: datagen
+      annotations:
+        # Bounce the pod when the config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/datagen-configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: datagen
+          image: "{{ .Values.datagen.image.repository }}:{{ .Values.datagen.image.tag }}"
+          imagePullPolicy: {{ .Values.datagen.image.pullPolicy }}
+          env:
+            - name: DATAGEN_CONFIG
+              value: /etc/datagen/config.yaml
+            - name: RUST_LOG
+              value: {{ .Values.datagen.rustLog | quote }}
+          resources:
+            {{- toYaml .Values.datagen.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/datagen
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "snowmelt.fullname" . }}-datagen
+{{- end }}

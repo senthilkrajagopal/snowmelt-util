@@ -1,0 +1,14 @@
+# Local state — never commit (contains resource data and can include secrets)
+*.tfstate
+*.tfstate.*
+.terraform/
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored — commit it so
+# provider versions+hashes are pinned (supply-chain continuity).
+
+# Variable files with real values
+terraform.tfvars
+*.auto.tfvars
+
+# Crash logs / plans
+crash.log
+*.tfplan

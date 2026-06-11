@@ -1,0 +1,55 @@
+# snowmelt-demo — the OpenTelemetry Demo reconfigured to feed the snowmelt stack.
+#
+# Telemetry flow (all via the demo's own bundled collector):
+#   demo services -> demo otel-collector ->
+#     metrics      -> snowmelt's OTel collector  (loadbalanced into snowmelt's metric store)
+#     traces+logs  -> Quickwit's OTLP gRPC :7281 (auto-creates otel-{traces,logs}-v0_7)
+# The demo's bundled Jaeger / Prometheus / Grafana / OpenSearch are OFF — snowmelt +
+# Quickwit + the snowmelt UI (Logs / Traces / Dashboards pages) are the backend.
+#
+# CROSS-NAMESPACE: snowmelt runs as release `snowmelt` in namespace `default`; this
+# chart installs in its own namespace (`demo`), so the endpoints below are
+# `<svc>.default.svc.cluster.local` FQDNs. If snowmelt's release/namespace differ,
+# override the two `endpoint:` values in your -f values file.
+
+opentelemetry-demo:
+  # ── Disable the demo's bundled observability backends ──────────────────────
+  jaeger:     { enabled: false }
+  prometheus: { enabled: false }
+  grafana:    { enabled: false }
+  opensearch: { enabled: false }
+
+  # ── Reconfigure the demo's bundled OTel Collector ──────────────────────────
+  # Helm deep-merges maps and REPLACES lists, so we only add two exporters and
+  # re-point each pipeline's `exporters:` list. The chart's default otlp/jaeger,
+  # otlphttp/prometheus, and opensearch exporters stay defined but UNREFERENCED,
+  # so the collector never instantiates them (no failed connections to the
+  # disabled backends). `spanmetrics` (a connector: traces->metrics) is kept so
+  # span-derived RED metrics still reach snowmelt. Receivers/processors on each
+  # pipeline are untouched (map-merge preserves them).
+  opentelemetry-collector:
+    config:
+      exporters:
+        otlp/snowmelt:
+          endpoint: snowmelt-otel-collector.default.svc.cluster.local:4317
+          tls:
+            insecure: true
+        otlp/quickwit:
+          endpoint: snowmelt-quickwit.default.svc.cluster.local:7281
+          tls:
+            insecure: true
+      service:
+        pipelines:
+          traces:
+            exporters: [otlp/quickwit, spanmetrics]
+          metrics:
+            exporters: [otlp/snowmelt]
+          logs:
+            exporters: [otlp/quickwit]
+
+  # NOTE on metrics fidelity: snowmelt's ingest drops ExponentialHistogram +
+  # Summary (it keeps Gauge / Sum / explicit-bucket Histogram). The demo emits
+  # explicit-bucket histograms by default, so this is a small gap. To keep every
+  # histogram, set OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION=
+  # explicit_bucket_histogram on the services (per-component env) — left off here
+  # to avoid clobbering the chart's global `default.env` list.

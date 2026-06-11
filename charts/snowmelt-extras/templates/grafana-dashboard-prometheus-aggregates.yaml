@@ -1,0 +1,85 @@
+{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+# Sibling of `grafana-dashboard-aggregates.yaml`, but pinned to the
+# upstream `prometheus` datasource. Same panel set; metric names use
+# the OTel→Prometheus suffix convention (`_total`, `_bytes`, `_ratio`,
+# histogram `_count`/`_bucket`/`_sum`).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snowmelt.fullname" . }}-grafana-dashboard-prometheus-aggregates
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  prometheus-aggregates.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "id": null,
+      "uid": "prometheus-aggregates",
+      "title": "Prometheus — PromQL aggregates",
+      "tags": ["prometheus", "promql", "aggregates"],
+      "timezone": "",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {"list": []},
+      "panels": [
+        {{- $panels := list
+            (dict "title" "sum by (cloud_provider) of jvm_memory_used_bytes"
+                  "expr"  "sum by (cloud_provider) (jvm_memory_used_bytes)"
+                  "x" 0  "y" 0)
+            (dict "title" "sum by (k8s_namespace_name) of rate(mysql_query_count_total[1m])"
+                  "expr"  "sum by (k8s_namespace_name) (rate(mysql_query_count_total[1m]))"
+                  "x" 6  "y" 0)
+            (dict "title" "avg by (telemetry_sdk_language) of process_cpu_utilization_ratio"
+                  "expr"  "avg by (telemetry_sdk_language) (process_cpu_utilization_ratio)"
+                  "x" 12 "y" 0)
+            (dict "title" "max by (cloud_provider) of jvm_thread_count"
+                  "expr"  "max by (cloud_provider) (jvm_thread_count)"
+                  "x" 18 "y" 0)
+            (dict "title" "min by (cloud_provider) of redis_memory_used_bytes"
+                  "expr"  "min by (cloud_provider) (redis_memory_used_bytes)"
+                  "x" 0  "y" 8)
+            (dict "title" "count by (cloud_provider) of jvm_class_loaded_total series"
+                  "expr"  "count by (cloud_provider) (jvm_class_loaded_total)"
+                  "x" 6  "y" 8)
+            (dict "title" "sum without (k8s_pod_name) of postgresql_commits_total"
+                  "expr"  "sum without (k8s_pod_name) (postgresql_commits_total)"
+                  "x" 12 "y" 8)
+            (dict "title" "sum(rate(http_server_duration_count[1m])) — total event rate"
+                  "expr"  "sum(rate(http_server_duration_count[1m]))"
+                  "x" 18 "y" 8)
+            (dict "title" "avg by (service_name) of rate(redis_commands_processed_total[1m])"
+                  "expr"  "avg by (service_name) (rate(redis_commands_processed_total[1m]))"
+                  "x" 0  "y" 16)
+            (dict "title" "group by (cloud_provider) of kafka_consumer_group_lag — membership only"
+                  "expr"  "group by (cloud_provider) (kafka_consumer_group_lag)"
+                  "x" 6  "y" 16)
+        }}
+        {{- range $i, $p := $panels }}
+        {{- if $i }},{{ end }}
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "id": {{ add $i 1 }},
+          "type": "timeseries",
+          "title": {{ $p.title | toJson }},
+          "gridPos": {"h": 8, "w": 6, "x": {{ $p.x }}, "y": {{ $p.y }}},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"},
+            "tooltip": {"mode": "single"}
+          },
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "expr": {{ $p.expr | toJson }},
+              "refId": "A",
+              "legendFormat": ""
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}
