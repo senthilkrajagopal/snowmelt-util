@@ -84,9 +84,15 @@ config:
     datapoint-flush-max-records: 1000000
     datapoint-flush-check-interval-ms: 1000
   dp-files:
-    # Consolidate dp → dp_5m in bigger chunks so the dp tier doesn't drown
-    # in tiny files during a firehose.
-    eager-compaction-threshold-bytes: 268435456   # 256 MiB
+    # Eager dp→dp consolidation keeps the alive raw-file count (hence
+    # per-query scan cost) bounded. Lowered the threshold (256→64 MiB) and
+    # the window-max-age (6→2 min) so recent windows — which dashboards
+    # query — get consolidated quickly instead of accumulating thousands of
+    # small files. Pairs with the large WAL read batch (app side) that
+    # already cut per-drain file count ~375×.
+    eager-compaction-threshold-bytes: 67108864    # 64 MiB
+    eager-compaction-window-max-age-secs: 120     # 2 min
+    eager-compaction-gc-interval-secs: 30
 
 # ── OTel collector: don't let the datagen→collector→snowmelt hop be the cap ──
 # Stays in the snowmelt chart; datagen (in snowmelt-extras) sends OTLP here.
