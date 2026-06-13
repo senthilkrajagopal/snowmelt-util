@@ -23,11 +23,22 @@
 # Quickwit ON — it's the log/trace store for the OpenTelemetry Demo (snowmelt-demo
 # chart, `demo` namespace). The demo's collector ships traces+logs straight to
 # Quickwit's OTLP endpoint (snowmelt-quickwit.default:7281), which the UI's
-# Logs/Traces pages query. otelLogsCollector (snowmelt's OWN per-node filelog
-# DaemonSet) stays OFF — it parses every snowmelt-pod's stdout and is a real CPU
-# draw under the firehose; the demo's app logs don't need it.
+# Logs/Traces pages query.
+#
+# otelLogsCollector ON now — it's the per-node DaemonSet that carries the
+# `kubeletstats` receiver (node/pod/container/volume CPU·memory·network·fs), the
+# data source for the Kubernetes dashboards. It also tails pod logs (filelog) →
+# Quickwit, so snowmelt/infra pod logs join the demo logs in the Logs page. It
+# was off because filelog was a CPU draw UNDER THE FIREHOSE; with the firehose
+# disabled that's moot, and kubeletstats is the metrics we want.
 quickwit:          { enabled: true }
-otelLogsCollector: { enabled: false }
+otelLogsCollector:
+  enabled: true
+  kubeletStats: { enabled: true }
+  # Modest cap — kubeletstats + filelog on a single node is light without the
+  # firehose. Bump if the DaemonSet OOMs under heavier pod-log volume.
+  memoryLimitMib: 600
+  spikeLimitMib: 150
 
 # ── Node metrics → snowmelt (standalone node-exporter, no Prometheus server) ──
 # The prometheus subchart's server is mandatory (no server.enabled gate in v26),
