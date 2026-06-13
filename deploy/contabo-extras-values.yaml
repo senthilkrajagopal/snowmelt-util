@@ -71,10 +71,13 @@ datagen:
     seriesCount: 100
     tickIntervalSecs: 10
   otelgen:    { enabled: false }
-  # Streaming firehose ON. poolSize/tick is the per-pod generation rate; keep it
-  # ≈ the ship ceiling so the buffer neither starves nor overflows.
+  # Streaming firehose OFF. At ~200k dp/s it pins the OTel collector at its
+  # memory_limiter ceiling (8 GiB), which then refuses ALL incoming data —
+  # so the low-volume demo metrics (wellformed shapes, node-exporter) get
+  # dropped and their dashboards don't load. The firehose is a stress-test
+  # tool, not a demo source; re-enable it only for load testing.
   streaming:
-    enabled: true
+    enabled: false
     # poolSize = distinct series/pod ≈ the per-pod generation ceiling (~100k dp/s
     # /pod). 100000 × 6 pods = 600k series. Bigger poolSize doesn't raise dp/s
     # (gen-capped) — it only grows cardinality + the metadata warmup on restart
