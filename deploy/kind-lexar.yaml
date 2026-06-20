@@ -1,0 +1,9 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: snowmelt
+nodes:
+- role: control-plane
+  extraMounts:
+  # Map the Lexar SSD subdir into the node so a hostPath PV can land on it
+  - hostPath: /Volumes/Lexar/snowmelt-minio
+    containerPath: /mnt/lexar

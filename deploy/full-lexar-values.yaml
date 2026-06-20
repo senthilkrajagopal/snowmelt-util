@@ -1,0 +1,57 @@
+# Snowmelt local — full Contabo-style stack, MinIO PVC on the Lexar SSD
+replicaCount: 1
+
+image:
+  pullPolicy: Never            # snowmelt-app/ui/datagen are loaded into kind
+
+# MinIO object store — PVC bound to the SSD-backed hostPath PV
+minio:
+  enabled: true
+  persistence:
+    storageClass: lexar-minio
+    size: 20Gi
+
+nats:       { enabled: true }
+postgres:   { enabled: true }   # collected via prometheus/postgres scrape
+clickhouse: { enabled: true }   # collected via prometheus/clickhouse scrape
+ui:
+  enabled: true
+  ingress:
+    enabled: true   # HTTPS + HTTP/2 via ingress-nginx + cert-manager self-signed
+admin:      { enabled: true }
+
+# Full OTel collector: OTLP in + k8s_cluster receiver + k8sattributes processor,
+# auto-wires prometheus/{postgres,clickhouse,minio} scrapes -> snowmelt
+otelCollector:
+  enabled: true
+  kubernetes:
+    enabled: true
+  k8sAttributes:
+    enabled: true
+
+# Off for this deploy (logs/traces/entity not requested)
+quickwit:          { enabled: true }
+otelLogsCollector: { enabled: true }
+nodeExporter:      { enabled: false }
+entity:            { enabled: false }
+
+# WAL→vortex flush: bigger, fewer files. Flush every 10s (was 1s) -> ~10x fewer
+# vortex files; poller checks every 500ms so the size trigger + 10s mark fire
+# promptly. Trade-off: dp data becomes queryable ~10s after ingest (was ~1s).
+# Also raise the object-store concurrency cap to MinIO (was 64).
+config:
+  data:
+    s3:
+      max-concurrent-requests: 5000
+  jobs:
+    datapoint-flush-interval-secs: 10
+    datapoint-flush-check-interval-ms: 500
+    # D: enable the orphan-detector reaper (was dry-run) so it soft-deletes
+    # alive catalogue rows whose object 404s -> reaps the phantom-row bloat.
+    orphan-detectors:
+      - name: orphan_detector
+        cron: "30 */15 * * * *"
+        grace-secs: 7200
+        reap-orphan-files: true
+        reap-orphan-rows: true
+        dry-run: false
