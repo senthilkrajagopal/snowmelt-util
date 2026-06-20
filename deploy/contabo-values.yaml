@@ -94,6 +94,23 @@ config:
     datapoint-flush-interval-secs: 15
     datapoint-flush-max-records: 1000000
     datapoint-flush-check-interval-ms: 1000
+    # Enable the orphan-detector REAPER (chart/config default is dry-run, i.e.
+    # report-only — it deletes NOTHING). The raw-tier file bloat isn't a flush
+    # problem (flush is already batched at 15s / 1M records above); it's ORPHAN
+    # FILES — vortex objects a compactor wrote as dst then abandoned when its
+    # pod crashed mid-commit (and we've had pod churn here). Those objects have
+    # no catalogue row, so file-cleanup can't see them and they accumulate as
+    # small-file bloat. Flipping dry-run:false lets the reaper unlink them (and
+    # soft-delete ORPHAN ROWS whose object 404s). grace-secs (2h) is clamped to
+    # clear the 1h dp-files NATS TTL, so registration-pending objects are never
+    # reaped. Matches the lexar tune that cleared this same bloat.
+    orphan-detectors:
+      - name: orphan_detector
+        cron: "30 */15 * * * *"   # every 15 min at :30 (offset from file-cleanup at :00)
+        grace-secs: 7200
+        reap-orphan-files: true
+        reap-orphan-rows: true
+        dry-run: false
   dp-files:
     # Eager dp→dp consolidation keeps the alive raw-file count (hence
     # per-query scan cost) bounded. Lowered the threshold (256→64 MiB) and
