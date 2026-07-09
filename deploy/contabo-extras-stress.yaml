@@ -1,0 +1,48 @@
+# contabo-extras-stress.yaml — STRESS MODE datagen (snowmelt-extras chart).
+# The ingest FIREHOSE for throughput testing. Applied by deploy-stress.sh.
+#   helm upgrade --install snowmelt-extras ./charts/snowmelt-extras \
+#     -f contabo-extras-stress.yaml -n default
+#
+# Rate = replicaCount × streaming.poolSize dp/s (org_count DIVIDES the pool
+# across tenants, it does NOT multiply the rate). 4 × 12500 = 50k dp/s.
+# Bump poolSize to 25000 for 100k (overwhelmed the box at ~40-46 load — 50k is
+# the comfortable rate). Pair with the HEADLESS otel-collector service
+# (otelCollector.service.headless=true in contabo-values.yaml) so the datagen
+# gRPC sinks spread across all collector pods instead of pinning one.
+snowmeltFullname: snowmelt
+snowmeltPromqlPort: 9092
+observability:
+  prometheus: { enabled: false }
+  grafana:    { enabled: false }
+datagen:
+  enabled: true
+  replicaCount: 4            # × poolSize 25000 = 100k dp/s
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 3Gi }
+  # Direct to snowmelt's HEADLESS service (resolves to all pod IPs) — the datagen
+  # sink fans out one gRPC client per pod, so this bypasses the otel-collector
+  # entirely for the firehose (the collector stays only for prometheus scrapes).
+  otlpEndpoint: "http://snowmelt-headless.default.svc.cluster.local:4317"
+  otlp:
+    batchSize: 500           # lowered 1000->500 to test send-stall/overhead hypothesis
+    # flushMs MUST stay below batch_size×2×backends / per-pod-rate or the per-flush
+    # drain cap (otlp_sink.rs:380) overflows the buffer and drops. At 25k/pod,
+    # threshold ≈ 320ms (4 backends) / 160ms (2 backends). 100ms gives margin even
+    # if the sink only resolves 2 collectors.
+    flushMs: 100
+  initialDelaySecs: 120
+  wellformed:                # tiny (1600 series/10s); keeps wellformed dashboards alive
+    enabled: true
+    seriesCount: 100
+    tickIntervalSecs: 10
+  otelgen: { enabled: false }
+  streaming:                 # THE FIREHOSE
+    enabled: true
+    poolSize: 25000          # × 4 replicas = 100k dp/s (works at flushMs=100: small frequent
+                             # flushes stay under the per-flush drain cap even at 25k/pod)
+    tickIntervalSecs: 1
+    orgCount: 3
+    skipHistograms: true
+    churnPercent: 0
+    churnPeriodSecs: 0
