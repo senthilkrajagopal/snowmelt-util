@@ -16,7 +16,7 @@ observability:
   grafana:    { enabled: false }
 datagen:
   enabled: true
-  replicaCount: 8            # × poolSize 25000 = 200k dp/s
+  replicaCount: 16           # × poolSize 25000 = 400k dp/s
   resources:
     requests: { cpu: 500m, memory: 1Gi }
     limits:   { cpu: "2",  memory: 3Gi }
@@ -39,7 +39,7 @@ datagen:
   otelgen: { enabled: false }
   streaming:                 # THE FIREHOSE
     enabled: true
-    poolSize: 25000          # × 8 replicas = 200k dp/s (works at flushMs=100: small frequent
+    poolSize: 25000          # × 16 replicas = 400k dp/s (works at flushMs=100: small frequent
                              # flushes stay under the per-flush drain cap even at 25k/pod)
     tickIntervalSecs: 1
     orgCount: 3
