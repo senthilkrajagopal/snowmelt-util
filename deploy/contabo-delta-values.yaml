@@ -94,8 +94,12 @@ clickhouse:
   resources:
     # 2Gi default OOMs reading the metric_metadata `tags` column at ~85k+ series
     # (Code 241 MEMORY_LIMIT_EXCEEDED breaks live-tail history backfill + charts).
+    # cpu limit 12: the metadata read path (`fetch_partition_conformed` — full
+    # partition `FINAL` scan) is bursty under concurrent PromQL load; the 2-core
+    # chart default throttles it and blows the query tail out to seconds. Contabo
+    # runs on a 64-core node, so give ClickHouse headroom to absorb the bursts.
     requests: { cpu: "1", memory: 2Gi }
-    limits:   { memory: 12Gi }
+    limits:   { cpu: "12", memory: 12Gi }
 admin: { enabled: true }
 ui:    { enabled: true }
 entity: { enabled: false }

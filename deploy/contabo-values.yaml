@@ -181,8 +181,10 @@ postgres:
 clickhouse:
   enabled: true
   resources:
+    # cpu 12: metadata read path (full-partition `FINAL` scan) is bursty under
+    # concurrent PromQL load; give ClickHouse headroom on the 64-core contabo node.
     requests: { cpu: "2", memory: 4Gi }
-    limits:   { cpu: "6", memory: 16Gi }
+    limits:   { cpu: "12", memory: 16Gi }
   persistence:
     storageClass: ""
     size: 50Gi
