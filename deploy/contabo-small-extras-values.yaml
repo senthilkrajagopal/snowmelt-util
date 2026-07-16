@@ -1,0 +1,27 @@
+# contabo-small — snowmelt-extras chart: Prometheus + Grafana ONLY (NO datagen).
+# Install in the SAME namespace as the `snowmelt` release (default):
+#   helm install snowmelt-extras ./charts/snowmelt-extras -n default -f contabo-small-extras-values.yaml
+# Pairs with the snowmelt release having its otel-collector prometheusRemoteWrite
+# exporter enabled → this Prometheus (see the snowmelt-side overlay).
+
+snowmeltFullname: snowmelt
+snowmeltPromqlPort: 9092
+
+# Prometheus + Grafana on; datagen (the firehose) OFF.
+observability:
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true
+datagen:
+  enabled: false
+
+grafana:
+  # Login per request.
+  adminUser: admin@snowmelt.dev
+  adminPassword: sn0wmelt
+  # Expose Grafana publicly on NodePort 30090 (http://169.58.7.125:30090).
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30090
