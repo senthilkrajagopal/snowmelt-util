@@ -1,0 +1,36 @@
+# Minimal core: snowmelt + MinIO (PVC on Lexar SSD) + NATS
+replicaCount: 1
+
+image:
+  pullPolicy: Never            # image is loaded into kind, not pullable
+
+minio:
+  enabled: true
+  persistence:
+    storageClass: lexar-minio  # binds to the SSD-backed hostPath PV
+    size: 20Gi
+
+nats:
+  enabled: true
+
+# UI + admin (identity/RBAC the UI proxies) + postgres backing store
+ui:       { enabled: true }
+admin:    { enabled: true }
+postgres: { enabled: true }
+
+# OTel collector: receives OTLP, forks to snowmelt (prometheus fork stays off)
+otelCollector:
+  enabled: true
+
+# Still off for a lean local deploy
+otelLogsCollector: { enabled: false }
+quickwit:          { enabled: false }
+clickhouse:        { enabled: false }
+entity:            { enabled: false }
+nodeExporter:      { enabled: false }
+
+# Self-metrics: expose /metrics locally instead of pushing to the (disabled) collector
+config:
+  data:
+    metrics:
+      exporter: prometheus

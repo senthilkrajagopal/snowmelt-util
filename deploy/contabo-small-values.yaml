@@ -1,0 +1,107 @@
+# contabo-small (169.58.7.125) — snowmelt ONLY, no firehose.
+# 4 pods / 4 partitions, deltalake + clickhouse metadata, NATS buses.
+# Single disk + default k3s local-path storage (no storage-db/storage-s3 classes).
+# otelCollector ON: it's the telemetry pipeline (scrapes node/clickhouse/postgres/
+# minio exporters + k8s_cluster + carries snowmelt's own engine metrics into the
+# store) — NOT the datagen firehose (datagen stays off). Without it every dashboard
+# is empty. 1 replica is plenty with no synthetic load.
+quickwit:          { enabled: false, storageClass: local-path }
+otelLogsCollector: { enabled: false }
+otelCollector:
+  enabled: true
+  kubernetes:     { enabled: true }
+  k8sAttributes:  { enabled: true }
+  replicas: 1
+  service:
+    headless: true
+  resources:
+    requests: { cpu: "1", memory: 1Gi }
+    limits:   { cpu: "2", memory: 3Gi }
+  processors:
+    batch:         { sendBatchSize: 10000, timeout: 5s }
+    memoryLimiter: { limitMib: 2000, spikeLimitMib: 512 }
+  exporters:
+    prometheusRemoteWrite: { enabled: false }
+    snowmelt:              { enabled: true }
+nodeExporter:      { enabled: true }
+entity:            { enabled: false }
+admin:             { enabled: true }
+ui:
+  enabled: true
+  # Public UI on NodePort 30080 (http://169.58.7.125:30080). Baked in here so
+  # helm owns .spec.type — avoids the server-side-apply conflict a manual
+  # `kubectl patch` causes on upgrade. ⚠️ internet-facing with admin.enforce-auth
+  # OFF (unauthenticated) — set enforce-auth: true to lock down.
+  service:
+    type: NodePort
+    nodePort: 30080
+image:
+  pullPolicy: Never
+replicaCount: 4
+resources:
+  requests: { cpu: "2", memory: 4Gi }
+  limits:   { cpu: "5", memory: 10Gi }
+persistence:
+  storageClass: local-path
+  size: 80Gi
+config:
+  clickhouse:
+    enabled: true
+  metadata:
+    backend: clickhouse
+  kube:
+    enabled: true
+  global:
+    backend: deltalake
+    partition-count: 4
+    s3:
+      max-concurrent-requests: 1024
+  missing-metadata:              # master switch: also flips pipeline-change + metadata bus
+    backend: nats
+    nats-url: nats://snowmelt-nats:4222
+  delta-commits:
+    backend: nats
+    nats-url: nats://snowmelt-nats:4222
+    batch-window-ms: 5000
+    checkpoint-interval-commits: 50
+  dp-files:
+    consolidation-strategy: level-based
+    level-consolidation-interval-secs: 30
+  wal:
+    fsync-interval-ms: 1000
+  jobs:
+    datapoint-flush-interval-secs: 15
+    datapoint-flush-check-interval-ms: 1000
+  # global.metrics defaults (exporter=otlp → snowmelt-otel-collector:4317) are
+  # correct now that the collector is enabled; snowmelt's engine metrics flow
+  # collector → back into the store. (The earlier data.metrics.exporter override
+  # was under the wrong key and did nothing — removed.)
+minio:
+  enabled: true
+  apiRequestsMax: 2000
+  apiRequestsDeadline: 30s
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "4", memory: 8Gi }
+  persistence:
+    storageClass: local-path
+    size: 200Gi
+nats:
+  enabled: true
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "4", memory: 8Gi }
+postgres:
+  enabled: true
+  persistence:
+    storageClass: local-path
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 4Gi }
+clickhouse:
+  enabled: true
+  persistence:
+    storageClass: local-path
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "8", memory: 12Gi }

@@ -1,0 +1,105 @@
+# Contabo stress deploy — delta branch, MULTI-POD (8 pods / 8 partitions).
+# kube.enabled + NATS-backed buses (delta-commits, missing-metadata->{missing,
+# pipeline-change,metadata}, dp-files). Storage: storage-db(nvme2)=snowmelt/
+# clickhouse/postgres/quickwit, storage-s3(nvme3)=minio.
+quickwit:
+  enabled: false
+  storageClass: storage-db
+otelLogsCollector: { enabled: false }
+nodeExporter:      { enabled: true }
+image:
+  pullPolicy: Never
+replicaCount: 8
+resources:
+  requests: { cpu: "3", memory: 5Gi }
+  limits:   { cpu: "7", memory: 12Gi }
+persistence:
+  storageClass: storage-db     # nvme2 — snowmelt WAL + raw dp tier
+  size: 80Gi
+config:
+  clickhouse:
+    enabled: true
+  metadata:
+    backend: clickhouse
+  # ── multi-pod cluster ──
+  kube:
+    enabled: true
+  global:
+    backend: deltalake
+    partition-count: 8
+    s3:
+      max-concurrent-requests: 1024
+  # ── NATS-backed buses (required at 8 pods) ──
+  missing-metadata:              # master switch for missing-metadata + pipeline-change + metadata bus
+    backend: nats
+    nats-url: nats://snowmelt-nats:4222
+  delta-commits:
+    backend: nats
+    nats-url: nats://snowmelt-nats:4222
+    batch-window-ms: 5000
+    checkpoint-interval-commits: 50
+  dp-files:
+    consolidation-strategy: level-based
+    level-consolidation-interval-secs: 30
+  wal:
+    fsync-interval-ms: 1000
+  jobs:
+    datapoint-flush-interval-secs: 15
+    datapoint-flush-check-interval-ms: 1000
+  data:
+    metrics:
+      exporter: prometheus
+otelCollector:
+  enabled: true
+  kubernetes:     { enabled: true }
+  k8sAttributes:  { enabled: true }
+  replicas: 8
+  service:
+    headless: true
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "3", memory: 5Gi }
+  processors:
+    batch:         { sendBatchSize: 10000, timeout: 5s }
+    memoryLimiter: { limitMib: 4000, spikeLimitMib: 1000 }
+  exporters:
+    prometheusRemoteWrite: { enabled: false }
+    snowmelt:              { enabled: true }
+minio:
+  enabled: true
+  apiRequestsMax: 2000
+  apiRequestsDeadline: 30s
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits:   { cpu: "8", memory: 16Gi }
+  persistence:
+    storageClass: storage-s3   # nvme3
+    size: 200Gi
+nats:
+  enabled: true
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits:   { cpu: "6", memory: 10Gi }
+postgres:
+  enabled: true
+  persistence:
+    storageClass: storage-db
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 4Gi }
+clickhouse:
+  enabled: true
+  persistence:
+    storageClass: storage-db
+  resources:
+    # 2Gi default OOMs reading the metric_metadata `tags` column at ~85k+ series
+    # (Code 241 MEMORY_LIMIT_EXCEEDED breaks live-tail history backfill + charts).
+    # cpu limit 12: the metadata read path (`fetch_partition_conformed` — full
+    # partition `FINAL` scan) is bursty under concurrent PromQL load; the 2-core
+    # chart default throttles it and blows the query tail out to seconds. Contabo
+    # runs on a 64-core node, so give ClickHouse headroom to absorb the bursts.
+    requests: { cpu: "1", memory: 2Gi }
+    limits:   { cpu: "12", memory: 12Gi }
+admin: { enabled: true }
+ui:    { enabled: true }
+entity: { enabled: false }
