@@ -61,6 +61,9 @@ data:
         {{- range $i, $u := .Values.keycloak.realmImport.users }}
         {{- if $i }},{{ end }}
         {
+          {{- if $u.id }}
+          "id": {{ $u.id | quote }},
+          {{- end }}
           "username": {{ $u.username | quote }},
           "enabled": true,
           "email": {{ $u.email | quote }},

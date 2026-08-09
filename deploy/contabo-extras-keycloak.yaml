@@ -38,6 +38,19 @@ keycloak:
     - name: KC_HOSTNAME_STRICT
       value: "false"
 
+  # Persist the embedded H2 database on the box's data disk, so users
+  # configured here (and anything added later in the admin console) survive a
+  # pod restart. `storage-db` is the nvme2-backed class on this node.
+  volumeClaimTemplates: |
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: storage-db
+        resources:
+          requests:
+            storage: 1Gi
+
   realmImport:
     # Byte-for-byte identical to admin.oidc.providers.keycloak.redirect-url.
     redirectUris:
