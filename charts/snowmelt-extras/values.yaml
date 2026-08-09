@@ -91,6 +91,129 @@ datagen:
     growthPercent: 0
     growthWindowMinutes: 2
 
+# ── Keycloak (test OIDC identity provider) ───────────────────────────────────
+# OFF BY DEFAULT. Only for exercising snowmelt's SSO flow (`admin.oidc.*`).
+#
+# THROWAWAY BY DESIGN: `start-dev`, H2 in-memory (`dev-mem`) database, no TLS,
+# no persistence. The realm — client secret and user passwords included — is
+# re-imported from a ConfigMap on every start, so the IdP is reproducible from
+# git rather than from whatever someone last clicked. Anything created by hand
+# in the admin console is lost on restart, which is the intended trade.
+# Never point it at real identities.
+#
+# Values below (except `enabled` and `realmImport`) belong to the vendored
+# codecentric/keycloakx subchart; unknown keys are ignored by it.
+#
+# Enable with:
+#   --set keycloak.enabled=true \
+#   --set keycloak.extraEnv="..."   # see keycloak.hostname note below
+keycloak:
+  enabled: false
+
+  # Throwaway store — no external DB, nothing survives a restart.
+  database:
+    vendor: dev-mem
+
+  # "custom" tells the subchart to inject NO cache config. Its "default" stack
+  # sets KC_CACHE=ispn + KC_CACHE_STACK=jdbc-ping, i.e. clustered Infinispan
+  # discovering peers through a JDBC datasource — meaningless for a
+  # single-replica dev instance on an in-memory H2, and a startup hazard.
+  # Leaving it unset lets `start-dev` use its own local cache.
+  cache:
+    stack: custom
+
+  command:
+    - "/opt/keycloak/bin/kc.sh"
+  args:
+    - "start-dev"
+    - "--import-realm"
+
+  # HOSTNAME IS LOAD-BEARING — set it in your values overlay (see
+  # deploy/contabo-extras-keycloak.yaml). Two independent reasons it must be
+  # the externally reachable URL and must be exact:
+  #   1. snowmelt REFUSES a discovery document whose `issuer` differs from the
+  #      configured issuer, and Keycloak derives the issuer from KC_HOSTNAME.
+  #   2. the browser follows `authorization_endpoint` straight out of that same
+  #      document, so it must be an address the browser can resolve.
+  # A cluster-internal service name satisfies (2)'s server half but breaks the
+  # browser half. Use the node IP.
+  #
+  # KC_HOSTNAME MUST INCLUDE THE RELATIVE PATH. This chart serves under `/auth`
+  # (its default, kept because its probes are wired to match). Keycloak builds
+  # the advertised issuer/endpoints from KC_HOSTNAME *verbatim*, so a bare
+  #   http://<ip>:30081
+  # yields a discovery document whose own jwks_uri and authorization_endpoint
+  # 404 — it serves under /auth but advertises without it. Use
+  #   http://<ip>:30081/auth
+  # giving issuer <KC_HOSTNAME>/realms/<realm>. Always confirm against the live
+  # discovery document before configuring snowmelt's `issuer`.
+  extraEnv: |
+    - name: KC_BOOTSTRAP_ADMIN_USERNAME
+      value: admin
+    - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+      value: admin
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+
+  # Mount the realm JSON built by keycloak-realm-configmap.yaml. `--import-realm`
+  # reads everything in /opt/keycloak/data/import at startup.
+  extraVolumes: |
+    - name: realm
+      configMap:
+        name: {{ .Release.Name }}-keycloak-realm
+  extraVolumeMounts: |
+    - name: realm
+      mountPath: /opt/keycloak/data/import
+      readOnly: true
+
+  service:
+    type: NodePort
+    # 30080 (snowmelt UI), 30090 (otel-demo) and 30443 (Caddy) are taken on the
+    # stress box; 30081 is free.
+    httpNodePort: 30081
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # ── Realm content (OURS, not the subchart's) ───────────────────────────────
+  # Rendered into a ConfigMap by templates/keycloak-realm-configmap.yaml.
+  realmImport:
+    realm: snowmelt
+    clientId: snowmelt
+    # Dev-only. Lives in a ConfigMap rather than a Secret precisely because
+    # nothing here is confidential.
+    clientSecret: snowmelt-dev-secret
+    # Must match `admin.oidc.providers.<key>.redirect-url` in the snowmelt
+    # config EXACTLY — the IdP compares it byte-for-byte.
+    redirectUris:
+      - "http://localhost:30080/api/auth/oidc/keycloak/callback"
+    # `emailVerified` is meaningful: snowmelt treats an absent or false claim
+    # as NOT verified and refuses to link such a login to an existing account.
+    users:
+      - username: sso-alice
+        email: alice@example.com
+        emailVerified: true
+        firstName: Alice
+        lastName: Example
+        password: password
+      - username: sso-bob
+        email: bob@example.com
+        emailVerified: true
+        firstName: Bob
+        lastName: Example
+        password: password
+      - username: sso-carol
+        email: carol@example.com
+        emailVerified: false
+        firstName: Carol
+        lastName: Example
+        password: password
+
 # ── Prometheus sub-chart values ──────────────────────────────────────────────
 prometheus:
   alertmanager:

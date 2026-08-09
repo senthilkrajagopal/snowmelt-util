@@ -1,0 +1,42 @@
+# snowmelt-side OIDC config for the contabo stress box, pointing at the
+# Keycloak test IdP deployed by deploy/contabo-extras-keycloak.yaml.
+#
+#   helm upgrade snowmelt ./charts/snowmelt \
+#     -f /root/live-snowmelt-values.yaml \
+#     -f deploy/contabo-oidc.yaml -n default
+#
+# `admin.session-secret` is NOT set here: the chart generates it into the
+# `<release>-ui-auth` Secret and injects it as the SESSION_SECRET env var
+# (statefulset.yaml), preserving the existing value across upgrades. It signs
+# both the session cookie and the OIDC handshake cookie.
+config:
+  admin:
+    oidc:
+      enabled: true
+      providers:
+        keycloak:
+          display-name: Keycloak
+          # MUST equal the `issuer` in the live discovery document byte for
+          # byte — snowmelt refuses a mismatch. Confirm with:
+          #   curl -s <issuer>/.well-known/openid-configuration | jq .issuer
+          # The /auth segment is this Keycloak chart's relative path.
+          issuer: http://62.171.163.164:30081/auth/realms/snowmelt
+          client-id: snowmelt
+          # Dev-only secret, matching the realm ConfigMap in the extras chart.
+          client-secret: snowmelt-dev-secret
+          # MUST match the client's registered redirectUris exactly.
+          redirect-url: http://62.171.163.164:30080/api/auth/oidc/keycloak/callback
+          scopes:
+            - openid
+            - email
+            - profile
+
+      # Refuse to bind an IdP login to a pre-existing local account. Left at
+      # the safe default deliberately: with it on, any configured IdP could
+      # claim an existing account by asserting its email.
+      allow-link-existing-by-email: false
+
+      # Empty = no domain restriction. The seeded test users are @example.com.
+      allowed-email-domains: []
+
+      success-redirect: /

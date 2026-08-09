@@ -1,0 +1,44 @@
+# Keycloak test-IdP overlay for the contabo stress box (62.171.163.164).
+#
+# Layer ON TOP of whatever extras values are already live:
+#   helm upgrade snowmelt-extras ./charts/snowmelt-extras \
+#     -f /root/live-extras-values.yaml \
+#     -f deploy/contabo-extras-keycloak.yaml -n default
+#
+# Pairs with the snowmelt-side config in deploy/contabo-oidc.yaml.
+#
+# THROWAWAY IdP: dev-mem H2, no TLS, realm re-imported on every start, and the
+# client secret and user passwords are in a ConfigMap in plain text. It is
+# reachable from the public internet on :30081. Only for testing the SSO flow —
+# tear it down (`--set keycloak.enabled=false`) when finished.
+keycloak:
+  enabled: true
+
+  # The externally reachable base URL. Must be exact: Keycloak derives the
+  # `issuer` from it, snowmelt refuses a discovery document whose issuer
+  # disagrees with its configured value, and the browser follows
+  # `authorization_endpoint` out of that same document. The node IP satisfies
+  # both the pods (routable from inside the cluster) and the browser.
+  #
+  # KC_HOSTNAME MUST INCLUDE THE RELATIVE PATH (`/auth`, this chart's default).
+  # Verified the hard way: with a bare `http://<ip>:30081`, Keycloak still
+  # SERVES under /auth but ADVERTISES issuer and endpoints without it, so the
+  # discovery document is internally inconsistent — its own jwks_uri and
+  # authorization_endpoint both 404. Including the path makes the advertised
+  # URLs match where the server actually listens.
+  #
+  # Resulting issuer: http://62.171.163.164:30081/auth/realms/snowmelt
+  extraEnv: |
+    - name: KC_BOOTSTRAP_ADMIN_USERNAME
+      value: admin
+    - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+      value: admin
+    - name: KC_HOSTNAME
+      value: "http://62.171.163.164:30081/auth"
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+
+  realmImport:
+    # Byte-for-byte identical to admin.oidc.providers.keycloak.redirect-url.
+    redirectUris:
+      - "http://62.171.163.164:30080/api/auth/oidc/keycloak/callback"

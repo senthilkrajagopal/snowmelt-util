@@ -7,7 +7,7 @@ Operational companion to [snowmelt](https://github.com/senthilkrajagopal/snowmel
 
 | Area | Contents |
 |---|---|
-| `charts/snowmelt-extras` | Prometheus, Grafana (+ dashboards), datagen — the observe-the-observer stack |
+| `charts/snowmelt-extras` | Prometheus, Grafana (+ dashboards), datagen — the observe-the-observer stack; plus an opt-in Keycloak test IdP (off by default, see below) |
 | `charts/snowmelt-demo` | OpenTelemetry Astronomy Shop demo wiring |
 | `scripts/` | Python correctness/perf tooling (`compare_dashboards.py`, `perf_compare.py`, phase probes), deploy/redeploy scripts, disk benchmarks, k8s install helpers |
 | `terraform/` | AWS dev-node, EIP, and site stacks |
