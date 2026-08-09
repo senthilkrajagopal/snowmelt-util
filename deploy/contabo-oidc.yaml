@@ -47,7 +47,13 @@ config:
       # claim an existing account by asserting its email.
       allow-link-existing-by-email: false
 
-      # Empty = no domain restriction. The seeded test users are @example.com.
-      allowed-email-domains: []
+      # Who may auto-register. Entries are LITERAL domains, or `re:<pattern>`
+      # for a regex anchored to the whole domain. Literal is the default
+      # because `example.com` read as a regex would also match `exampleXcom`
+      # (`.` is a metacharacter). A malformed pattern matches nothing (fails
+      # closed) and is reported at startup.
+      allowed-email-domains:
+        # example.com and any subdomain of it, nothing else.
+        - "re:(.+\\.)?example\\.com"
 
       success-redirect: /
