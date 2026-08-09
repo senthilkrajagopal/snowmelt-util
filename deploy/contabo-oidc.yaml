@@ -24,6 +24,17 @@ config:
           client-id: snowmelt
           # Dev-only secret, matching the realm ConfigMap in the extras chart.
           client-secret: snowmelt-dev-secret
+          # The organization this IdP serves. ROUTING ONLY — it decides which
+          # login screen a domain sends you to. It does NOT grant membership:
+          # a first login still auto-registers with no role, and an admin
+          # assigns one afterwards.
+          org-id: 1
+          # Typed on the login page to reach this IdP. Note this selects the
+          # IdP; it does not restrict which account you may authenticate as
+          # (that is `allowed-email-domains`, left empty here), so the
+          # gmail/email.com test users still work behind example.com.
+          domains:
+            - example.com
           # MUST match the client's registered redirectUris exactly.
           redirect-url: http://62.171.163.164:30080/api/auth/oidc/keycloak/callback
           scopes:
