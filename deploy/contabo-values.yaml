@@ -132,6 +132,10 @@ otelCollector:
   # so per-replica ingest counters don't collide into one garbage series.
   k8sAttributes: { enabled: true }
   replicas: 4                      # datagen load-balances across these
+  service:
+    headless: true                 # clusterIP: None → datagen gRPC sinks round-robin
+                                   # across ALL collector pods (fixes the L4 VIP skew
+                                   # that pinned the firehose onto 1-2 collectors)
   resources:
     requests: { cpu: "1", memory: 4Gi }
     limits:   { cpu: "4", memory: 10Gi }
