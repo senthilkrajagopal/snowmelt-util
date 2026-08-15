@@ -14,6 +14,49 @@
 snowmeltFullname: snowmelt
 snowmeltPromqlPort: 9092
 
+# ── Istio service mesh ────────────────────────────────────────────────────────
+# The CLIENT half of the mesh config the snowmelt chart owns.
+#
+# datagen exports OTLP/gRPC to "<snowmeltFullname>-otel-collector:4317" — a
+# ClusterIP Service. Kubernetes balances that at L4, i.e. per CONNECTION, and
+# gRPC opens ONE long-lived HTTP/2 connection and multiplexes every export over
+# it. So each datagen replica pins to exactly one collector pod for its
+# lifetime, however many replicas the collector has, and a collector rollout
+# strands it on a dead endpoint until datagen itself restarts.
+#
+# A sidecar fixes both: datagen talks to its local Envoy, which balances per
+# REQUEST across endpoints it tracks live from istiod. This is the half that
+# actually does the work — the snowmelt chart's DestinationRule for the
+# collector Service sets the policy, but nothing applies it until the CALLER
+# carries a sidecar.
+#
+# Requires Istio to already be installed and `istio.enabled=true` on the
+# snowmelt release (which renders that DestinationRule). Injecting here without
+# it is harmless but pointless: Envoy falls back to the same ClusterIP VIP.
+istio:
+  # Inject the sidecar into datagen's pods.
+  enabled: false
+
+  # ⚠ THE SIDECAR ALONE DOES NOTHING IF datagen STILL DIALS A HEADLESS SERVICE.
+  #
+  # Istio passes headless traffic straight through to the IP the client already
+  # resolved — Envoy never load-balances it. So a deployment that overrides
+  # `datagen.otlpEndpoint` to `snowmelt-headless:4317` (datagen's own DNS
+  # fan-out, the pre-mesh workaround) gets an injected pod, a running Envoy,
+  # and exactly the same pinning it had before. Nothing errors; it just
+  # silently fails to help.
+  #
+  # When `istio.enabled`, point datagen at the CLUSTERIP service instead and
+  # let Envoy do the fan-out:
+  #
+  #   datagen:
+  #     otlpEndpoint: http://snowmelt.<namespace>.svc.cluster.local:4317
+  #
+  # That also removes the reason the headless workaround existed: datagen
+  # resolves DNS once at connect, so a snowmelt rollout stranded it on dead pod
+  # IPs until datagen itself restarted. Envoy tracks endpoints live from
+  # istiod, so pod IPs can churn freely.
+
 # ── Observability toggles (gate the prometheus + grafana sub-charts + the
 #    grafana-dashboard ConfigMaps) ────────────────────────────────────────────
 observability:
@@ -90,6 +133,198 @@ datagen:
     churnWindowMinutes: 2
     growthPercent: 0
     growthWindowMinutes: 2
+
+# ── Keycloak (test OIDC identity provider) ───────────────────────────────────
+# OFF BY DEFAULT. Only for exercising snowmelt's SSO flow (`admin.oidc.*`).
+#
+# THROWAWAY BY DESIGN: `start-dev`, H2 in-memory (`dev-mem`) database, no TLS,
+# no persistence. The realm — client secret and user passwords included — is
+# re-imported from a ConfigMap on every start, so the IdP is reproducible from
+# git rather than from whatever someone last clicked. Anything created by hand
+# in the admin console is lost on restart, which is the intended trade.
+# Never point it at real identities.
+#
+# Values below (except `enabled` and `realmImport`) belong to the vendored
+# codecentric/keycloakx subchart; unknown keys are ignored by it.
+#
+# Enable with:
+#   --set keycloak.enabled=true \
+#   --set keycloak.extraEnv="..."   # see keycloak.hostname note below
+keycloak:
+  enabled: false
+
+  # Embedded H2 ON DISK (Keycloak has no SQLite driver; `dev-file` is its
+  # equivalent). Paired with the PVC below so configured users — and anything
+  # created later in the admin console — survive a pod restart.
+  #
+  # `--import-realm` skips a realm that already exists, so the ConfigMap seeds
+  # the realm on FIRST boot only and never clobbers later console edits.
+  database:
+    vendor: dev-file
+
+  # "custom" tells the subchart to inject NO cache config. Its "default" stack
+  # sets KC_CACHE=ispn + KC_CACHE_STACK=jdbc-ping, i.e. clustered Infinispan
+  # discovering peers through a JDBC datasource — meaningless for a
+  # single-replica dev instance on an in-memory H2, and a startup hazard.
+  # Leaving it unset lets `start-dev` use its own local cache.
+  cache:
+    stack: custom
+
+  command:
+    - "/opt/keycloak/bin/kc.sh"
+  args:
+    - "start-dev"
+    - "--import-realm"
+
+  # HOSTNAME IS LOAD-BEARING — set it in your values overlay (see
+  # deploy/contabo-extras-keycloak.yaml). Two independent reasons it must be
+  # the externally reachable URL and must be exact:
+  #   1. snowmelt REFUSES a discovery document whose `issuer` differs from the
+  #      configured issuer, and Keycloak derives the issuer from KC_HOSTNAME.
+  #   2. the browser follows `authorization_endpoint` straight out of that same
+  #      document, so it must be an address the browser can resolve.
+  # A cluster-internal service name satisfies (2)'s server half but breaks the
+  # browser half. Use the node IP.
+  #
+  # KC_HOSTNAME MUST INCLUDE THE RELATIVE PATH. This chart serves under `/auth`
+  # (its default, kept because its probes are wired to match). Keycloak builds
+  # the advertised issuer/endpoints from KC_HOSTNAME *verbatim*, so a bare
+  #   http://<ip>:30081
+  # yields a discovery document whose own jwks_uri and authorization_endpoint
+  # 404 — it serves under /auth but advertises without it. Use
+  #   http://<ip>:30081/auth
+  # giving issuer <KC_HOSTNAME>/realms/<realm>. Always confirm against the live
+  # discovery document before configuring snowmelt's `issuer`.
+  # KC_BOOTSTRAP_ADMIN_* APPLIES ON FIRST BOOT ONLY. Keycloak creates the
+  # master-realm admin when the database is empty and ignores these variables
+  # ever after — and with `dev-file` on a PVC the database is not empty after
+  # the first start. Changing the password below therefore affects only a fresh
+  # install (or one whose PVC has been deleted). To rotate it on a running
+  # instance, go through the admin API:
+  #   kubectl exec -n <ns> <release>-keycloak-0 -- sh -c '
+  #     /opt/keycloak/bin/kcadm.sh config credentials --server \
+  #       http://localhost:8080/auth --realm master --user admin --password <old>
+  #     /opt/keycloak/bin/kcadm.sh set-password -r master --username admin \
+  #       --new-password <new>'
+  extraEnv: |
+    - name: KC_BOOTSTRAP_ADMIN_USERNAME
+      value: admin
+    - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+      value: sn0wmelt
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+
+  # Mount the realm JSON built by keycloak-realm-configmap.yaml. `--import-realm`
+  # reads everything in /opt/keycloak/data/import at startup.
+  extraVolumes: |
+    - name: realm
+      configMap:
+        name: {{ .Release.Name }}-keycloak-realm
+  # NOTE the h2 mount path. The PVC covers data/h2 — where `dev-file` keeps
+  # the database — and NOT data/, because mounting the parent would shadow
+  # the realm-import ConfigMap at data/import and the seed would never load.
+  extraVolumeMounts: |
+    - name: realm
+      mountPath: /opt/keycloak/data/import
+      readOnly: true
+    - name: data
+      mountPath: /opt/keycloak/data/h2
+
+  # Persistent claim backing `dev-file`. Override wholesale (it is a string,
+  # so Helm replaces rather than merges) to set a storageClass.
+  volumeClaimTemplates: |
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+  service:
+    type: NodePort
+    # 30080 (snowmelt UI), 30090 (otel-demo) and 30443 (Caddy) are taken on the
+    # stress box; 30081 is free.
+    httpNodePort: 30081
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # ── Realm content (OURS, not the subchart's) ───────────────────────────────
+  # Rendered into a ConfigMap by templates/keycloak-realm-configmap.yaml.
+  realmImport:
+    realm: snowmelt
+    clientId: snowmelt
+    # Dev-only. Lives in a ConfigMap rather than a Secret precisely because
+    # nothing here is confidential.
+    clientSecret: snowmelt-dev-secret
+    # Must match `admin.oidc.providers.<key>.redirect-url` in the snowmelt
+    # config EXACTLY — the IdP compares it byte-for-byte.
+    redirectUris:
+      - "http://localhost:30080/api/auth/oidc/keycloak/callback"
+    # Extra confidential clients for other relying parties on this realm. Each
+    # is {clientId, secret, redirectUris[], name?}. Empty here; the contabo
+    # overlay adds the `kagent` client that fronts kagent's UI with
+    # oauth2-proxy (see deploy/contabo-extras-keycloak.yaml).
+    #
+    # SEEDED ON FIRST BOOT ONLY, like everything else in this realm —
+    # `--import-realm` skips a realm that already exists, and the H2 database is
+    # on a PVC. Adding an entry here and running `helm upgrade` rewrites the
+    # ConfigMap but does NOT create the client on a Keycloak that has already
+    # booted. Create it live with kcadm.sh as well (or delete the realm and let
+    # it re-import, losing anything console-configured).
+    extraClients: []
+    # `id` PINS the Keycloak user id, which becomes the OIDC `sub` claim and
+    # is snowmelt's identity key. Without it Keycloak mints a fresh id on
+    # every realm import — and since this IdP is in-memory, that is every
+    # restart — so a returning user arrives with an unknown sub, matches an
+    # existing account by email instead, and is refused with
+    # `account_exists_link_disabled`. Pinning makes the realm truly
+    # reproducible rather than merely re-created.
+    #
+    # `emailVerified` is meaningful: snowmelt treats an absent or false claim
+    # as NOT verified and refuses to link such a login to an existing account.
+    users:
+      - username: sso-alice
+        id: 11111111-1111-4111-8111-111111111111
+        email: alice@example.com
+        emailVerified: true
+        firstName: Alice
+        lastName: Example
+        password: password
+      - username: sso-bob
+        id: 22222222-2222-4222-8222-222222222222
+        email: bob@example.com
+        emailVerified: true
+        firstName: Bob
+        lastName: Example
+        password: password
+      - username: sso-carol
+        id: 33333333-3333-4333-8333-333333333333
+        email: carol@example.com
+        emailVerified: false
+        firstName: Carol
+        lastName: Example
+        password: password
+      # Operator login for the kagent UI behind oauth2-proxy (the `kagent`
+      # client added via extraClients in the contabo overlay). Separate from
+      # the sso-* users above because those exist to exercise specific branches
+      # of snowmelt's OIDC callback and are not meant to be a general login.
+      #
+      # Seeded on a FRESH install only — the live contabo Keycloak got this
+      # user via kcadm.sh on 2026-08-15, same as the kagent client.
+      - username: kagent
+        id: 44444444-4444-4444-8444-444444444444
+        email: kagent@example.com
+        emailVerified: true
+        firstName: Kagent
+        lastName: Operator
+        password: kagent-sn0wmelt
 
 # ── Prometheus sub-chart values ──────────────────────────────────────────────
 prometheus:

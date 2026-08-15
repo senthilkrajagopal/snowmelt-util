@@ -1,0 +1,114 @@
+{{- if .Values.keycloak.enabled }}
+# Declarative realm for the test IdP: one confidential client for snowmelt
+# plus a few users. Imported on every start (`--import-realm`), so the IdP is
+# reproducible instead of click-configured — re-running `helm upgrade` and
+# bouncing the pod always yields the same realm.
+#
+# The users are chosen to exercise the branches in snowmelt's callback:
+#   - sso-alice   verified email, no matching snowmelt account → JIT registers
+#                 with NO membership (the headline path)
+#   - sso-bob     verified email — point it at an existing local account to see
+#                 the `account_exists_link_disabled` refusal
+#   - sso-carol   emailVerified=false → refused as `email_not_verified` when
+#                 allow-link-existing-by-email is on
+#
+# NAME: built from `.Release.Name` rather than the parent's `fullname` helper
+# on purpose — the keycloakx subchart mounts this via `extraVolumes`, which is
+# `tpl`'d in the SUBCHART's context where the parent helper does not exist.
+# `.Release` is global, so this one expression resolves identically in both.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-keycloak-realm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+data:
+  {{ .Values.keycloak.realmImport.realm }}-realm.json: |
+    {
+      "realm": {{ .Values.keycloak.realmImport.realm | quote }},
+      "enabled": true,
+      "sslRequired": "none",
+      "registrationAllowed": false,
+      "loginWithEmailAllowed": true,
+      "clients": [
+        {
+          "clientId": {{ .Values.keycloak.realmImport.clientId | quote }},
+          "name": "Snowmelt",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "bearerOnly": false,
+          "secret": {{ .Values.keycloak.realmImport.clientSecret | quote }},
+          "standardFlowEnabled": true,
+          "implicitFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": [
+            {{- range $i, $u := .Values.keycloak.realmImport.redirectUris }}
+            {{- if $i }},{{ end }}
+            {{ $u | quote }}
+            {{- end }}
+          ],
+          "webOrigins": ["+"],
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          }
+        }
+        {{- /*
+          Additional confidential clients — one per OIDC relying party beyond
+          snowmelt itself (oauth2-proxy in front of kagent, for instance).
+          Same shape as the snowmelt client above, minus the PKCE attribute:
+          oauth2-proxy 7.6 does not send a code_challenge unless told to, and
+          Keycloak rejects the exchange if the client demands one that never
+          arrives.
+        */}}
+        {{- range .Values.keycloak.realmImport.extraClients }}
+        ,{
+          "clientId": {{ .clientId | quote }},
+          "name": {{ .name | default .clientId | quote }},
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "bearerOnly": false,
+          "secret": {{ .secret | quote }},
+          "standardFlowEnabled": true,
+          "implicitFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": [
+            {{- range $i, $u := .redirectUris }}
+            {{- if $i }},{{ end }}
+            {{ $u | quote }}
+            {{- end }}
+          ],
+          "webOrigins": ["+"]
+        }
+        {{- end }}
+      ],
+      "users": [
+        {{- range $i, $u := .Values.keycloak.realmImport.users }}
+        {{- if $i }},{{ end }}
+        {
+          {{- if $u.id }}
+          "id": {{ $u.id | quote }},
+          {{- end }}
+          "username": {{ $u.username | quote }},
+          "enabled": true,
+          "email": {{ $u.email | quote }},
+          "emailVerified": {{ $u.emailVerified }},
+          "firstName": {{ $u.firstName | default "" | quote }},
+          "lastName": {{ $u.lastName | default "" | quote }},
+          "credentials": [
+            {
+              "type": "password",
+              "value": {{ $u.password | quote }},
+              "temporary": false
+            }
+          ]
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

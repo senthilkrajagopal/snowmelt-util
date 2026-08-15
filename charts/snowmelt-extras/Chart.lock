@@ -5,5 +5,8 @@ dependencies:
 - name: grafana
   repository: https://grafana.github.io/helm-charts
   version: 8.0.2
-digest: sha256:a2c00a9178cb0c5339ab9fd48fa98b608b848bc66d6235acb44ba7e30f0d11a5
-generated: "2026-06-07T11:00:53.005627-07:00"
+- name: keycloakx
+  repository: https://codecentric.github.io/helm-charts
+  version: 7.2.2
+digest: sha256:d91baaba238b791e8d8e741f2406a207d0635e43fcf9685cb2ff8e3434bd6c8b
+generated: "2026-08-09T13:04:46.86233-07:00"

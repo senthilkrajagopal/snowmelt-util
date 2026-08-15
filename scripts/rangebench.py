@@ -180,6 +180,23 @@ def run_level(url, concurrency, n, timeout):
     wall = time.perf_counter() - t0
     return results, wall
 
+def run_mixed(base, names, start, end, step, concurrency, total, timeout):
+    # DISTRIBUTED load: a fixed pool of `concurrency` workers, each pulling the
+    # NEXT query round-robin from the whole set. So ~`concurrency` DIFFERENT
+    # queries are in flight at any instant (spread across partitions + kinds) —
+    # a realistic mix, NOT `concurrency` copies of one query all hammering one
+    # partition owner + one ClickHouse metadata read.
+    urls = [(nm, build_url(base, QUERIES[nm], start, end, step)) for nm in names]
+    def worker(i):
+        nm, url = urls[i % len(urls)]
+        dt, code, _, _ = one_request(url, timeout)
+        return (dt, code, nm)
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        results = list(ex.map(worker, range(total)))
+    wall = time.perf_counter() - t0
+    return results, wall
+
 def fmt(s):
     return (f"n={s['n']:>3} ok={s['ok']:>3} err={s['errs']:>2}  "
             f"thr={s['throughput']:6.2f} q/s  "
@@ -194,11 +211,12 @@ def main():
     ap.add_argument("--window-min", type=int, default=60, help="span length (1h)")
     ap.add_argument("--step", default="60")
     ap.add_argument("--timeout", type=float, default=90)
-    ap.add_argument("--mode", choices=["probe", "latency", "concurrency", "all"], default="all")
+    ap.add_argument("--mode", choices=["probe", "latency", "concurrency", "mixed", "all"], default="all")
     ap.add_argument("--queries", default="", help="comma list of names; default = curated set")
     ap.add_argument("--group", default="", help="wide-all | wide-<template> (e.g. wide-sumrate) — partition-balanced sets")
     ap.add_argument("--levels", default="1,2,4,8,16,32")
     ap.add_argument("--reqs-per-level", type=int, default=0, help="0 => max(4*conc,12)")
+    ap.add_argument("--total", type=int, default=0, help="mixed mode: total requests (0 => 12*conc)")
     ap.add_argument("--latency-n", type=int, default=20)
     args = ap.parse_args()
 
@@ -247,6 +265,23 @@ def main():
                 n = args.reqs_per_level or max(4 * c, 12)
                 results, wall = run_level(url, c, n, args.timeout)
                 print(f"  conc={c:>3}  {fmt(summarize(results, wall))}")
+
+    if args.mode == "mixed":
+        import collections
+        for c in levels:
+            total = args.total or 12 * c
+            print(f"\n## MIXED LOAD — conc={c}, {len(names)} distinct queries round-robin, total={total} reqs")
+            # warm a spread of the set so no single query pays a cold penalty
+            for nm in names[:: max(1, len(names) // 8)]:
+                one_request(build_url(args.base, QUERIES[nm], start, end, args.step), args.timeout)
+            results, wall = run_mixed(args.base, names, start, end, args.step, c, total, args.timeout)
+            print(f"  AGGREGATE  {fmt(summarize([(r[0], r[1]) for r in results], wall))}")
+            byp = collections.defaultdict(list)
+            for dt, code, nm in results:
+                p = nm.rsplit("_", 1)[1] if nm.startswith("w_") else nm
+                byp[p].append((dt, code))
+            for p in sorted(byp):
+                print(f"    {p:5} {fmt(summarize(byp[p], wall))}")
     print("\n# done")
 
 if __name__ == "__main__":
