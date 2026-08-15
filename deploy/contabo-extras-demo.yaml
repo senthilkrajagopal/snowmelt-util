@@ -1,0 +1,35 @@
+# contabo-extras-demo.yaml — DEMO MODE datagen (snowmelt-extras chart).
+# ONE light pod: wellformed canonical shapes only, NO streaming firehose, so the
+# OpenTelemetry Demo's telemetry (traces/logs/metrics) isn't starved. Applied by
+# deploy-demo.sh.
+#   helm upgrade --install snowmelt-extras ./charts/snowmelt-extras \
+#     -f contabo-extras-demo.yaml -n default
+snowmeltFullname: snowmelt
+snowmeltPromqlPort: 9092
+observability:
+  prometheus: { enabled: false }
+  grafana:    { enabled: false }
+datagen:
+  enabled: true
+  replicaCount: 1            # single light pod in demo mode
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits:   { cpu: "10", memory: 12Gi }
+  otlpEndpoint: "http://snowmelt-otel-collector.default.svc.cluster.local:4317"
+  otlp:
+    batchSize: 10000
+    flushMs: 250
+  initialDelaySecs: 120
+  wellformed:                # 8 canonical waveforms × 100 series = 1600 series, 10s tick
+    enabled: true
+    seriesCount: 100
+    tickIntervalSecs: 10
+  otelgen: { enabled: false }
+  streaming:
+    enabled: false           # NO firehose in demo mode
+    poolSize: 100000
+    tickIntervalSecs: 1
+    orgCount: 3
+    skipHistograms: true
+    churnPercent: 0
+    churnPeriodSecs: 0
