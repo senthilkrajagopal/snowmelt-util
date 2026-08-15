@@ -6,18 +6,24 @@
 # Two releases, CRDs first — the kagent chart ships Agent/ModelConfig custom
 # resources, and `helm install` resolves every manifest's kind against the API
 # server BEFORE creating anything, so the CRDs cannot ride along in the same
-# release. See charts/snowmelt-kagent-crds/Chart.yaml.
+# release. See charts/snowmelt-ai/snowmelt-kagent-crds/Chart.yaml (snowmelt repo).
 #
 # THE API KEY IS NOT IN GIT. Create it once, before the first run:
 #   kubectl create secret generic kagent-mistral -n kagent \
 #     --from-literal=OPENAI_API_KEY=<your mistral key>
 # (the key is named OPENAI_API_KEY because Mistral is driven through kagent's
-# OpenAI-compatible provider — see charts/snowmelt-kagent/values.yaml).
+# OpenAI-compatible provider — see charts/snowmelt-ai/snowmelt-kagent/values.yaml).
 set -uo pipefail
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 UTIL=/root/snowmelt-util
-CRDS="$UTIL/charts/snowmelt-kagent-crds"
-KA="$UTIL/charts/snowmelt-kagent"
+# The AI charts live in the SNOWMELT repo under charts/snowmelt-ai/, not here.
+# They moved because they are runtime components of the product (the copilot
+# talks to them) rather than ops assets, which is the line this repo draws.
+# Override when the checkout is somewhere else.
+SM=${SNOWMELT_SRC:-/root/sm-agw}
+AI="$SM/charts/snowmelt-ai"
+CRDS="$AI/snowmelt-kagent-crds"
+KA="$AI/snowmelt-kagent"
 DEP="$UTIL/deploy"
 NS=kagent
 echo "===== KAGENT DEPLOY $(date -u) ====="

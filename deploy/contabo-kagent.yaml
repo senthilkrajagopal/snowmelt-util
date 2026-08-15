@@ -2,9 +2,9 @@
 # chart (64 vCPU / 125 GiB, single-node k3s, `local-path` default
 # StorageClass). Applied by deploy/deploy-kagent.sh.
 #
-#   helm upgrade --install kagent-crds ./charts/snowmelt-kagent-crds \
+#   helm upgrade --install kagent-crds <snowmelt>/charts/snowmelt-ai/snowmelt-kagent-crds \
 #     -n kagent --create-namespace
-#   helm upgrade --install kagent      ./charts/snowmelt-kagent \
+#   helm upgrade --install kagent      <snowmelt>/charts/snowmelt-ai/snowmelt-kagent \
 #     -n kagent -f deploy/contabo-kagent.yaml
 #
 # snowmelt itself runs as release `snowmelt` in namespace `default`; kagent runs
