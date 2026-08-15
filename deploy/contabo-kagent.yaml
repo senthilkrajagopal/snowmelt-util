@@ -1,0 +1,143 @@
+# contabo-kagent.yaml — Contabo BIG box override for the `snowmelt-kagent`
+# chart (64 vCPU / 125 GiB, single-node k3s, `local-path` default
+# StorageClass). Applied by deploy/deploy-kagent.sh.
+#
+#   helm upgrade --install kagent-crds ./charts/snowmelt-kagent-crds \
+#     -n kagent --create-namespace
+#   helm upgrade --install kagent      ./charts/snowmelt-kagent \
+#     -n kagent -f deploy/contabo-kagent.yaml
+#
+# snowmelt itself runs as release `snowmelt` in namespace `default`; kagent runs
+# in `kagent`, so every cross-reference below is a `.default.svc.cluster.local`
+# FQDN.
+#
+# THE MISTRAL KEY IS NOT HERE. The chart expects a Secret `kagent-mistral` with
+# key OPENAI_API_KEY (the key name is OPENAI_API_KEY because Mistral is driven
+# through kagent's OpenAI-compatible provider — see the chart's values.yaml).
+# deploy-kagent.sh refuses to run until that Secret exists.
+
+# ── The UI's direct NodePort is OFF ──────────────────────────────────────────
+# It used to be on, serving kagent-ui unauthenticated on :30082. oauth2-proxy
+# now owns that port (below) and is the only way in. Turning this back on would
+# reopen a route straight to kagent-ui that skips authentication entirely —
+# and the controller runs in `trusted-proxy` mode, so it would believe any
+# Authorization header that arrived that way.
+uiNodePort:
+  enabled: false
+  port: 30082
+
+kagent:
+  # ── oauth2-proxy → the snowmelt-extras Keycloak ────────────────────────────
+  # Front door on :30082. Browser hits oauth2-proxy, which runs the OIDC code
+  # flow against the `snowmelt` realm as client `kagent`, then proxies through
+  # to kagent-ui with the JWT attached.
+  #
+  # BOTH URLs BELOW MUST BE THE EXTERNALLY REACHABLE NODE IP, and both are
+  # compared byte-for-byte by something:
+  #   - OIDC_ISSUER_URL must equal the `issuer` in the live discovery document
+  #     (confirm: curl -s <issuer>/.well-known/openid-configuration | jq .issuer).
+  #     The /auth segment is the keycloakx chart's relative path — omit it and
+  #     discovery 404s. Same trap documented in deploy/contabo-oidc.yaml.
+  #   - OIDC_REDIRECT_URL must equal a redirectUri registered on the `kagent`
+  #     client in the realm, or Keycloak refuses the callback.
+  # The node IP satisfies both audiences: pods can route to it (verified) and
+  # so can the browser. A cluster-internal Service name would break the browser
+  # half of the flow.
+  oauth2-proxy:
+    service:
+      type: NodePort
+      portNumber: 4180
+      nodePort: 30082
+    # A NodePort Service allocates a node port for EVERY port it declares, so
+    # leaving the metrics listener on published oauth2-proxy's /metrics to the
+    # public IP too, on a random high port (observed: 30709). Nothing scrapes
+    # it here — snowmelt-extras' Prometheus is disabled on this box — so the
+    # port only widened the attack surface. Off.
+    #
+    # To scrape it later, prefer flipping the Service back to ClusterIP and
+    # adding a NodePort only for :4180, over pinning a second public port.
+    metrics:
+      enabled: false
+    extraEnv:
+      - name: OIDC_ISSUER_URL
+        value: "http://62.171.163.164:30081/auth/realms/snowmelt"
+      - name: OIDC_REDIRECT_URL
+        value: "http://62.171.163.164:30082/oauth2/callback"
+      - name: UPSTREAM_URL
+        value: "http://kagent-ui:8080"
+
+  # ── Bundled Postgres ───────────────────────────────────────────────────────
+  # storage-db, NOT the default class. `local-path` is marked default on this
+  # box but the local-path-provisioner's ConfigMap only declares
+  # storageClassConfigs for `storage-db` (/mnt/nvme2) and `storage-s3`
+  # (/mnt/nvme3) — a claim against plain `local-path` is rejected outright with
+  #   failed to provision volume with StorageClass "local-path":
+  #   BUG: Got request for unexpected storage class local-path
+  # and the PVC sits Pending forever (taking the controller into CrashLoopBackOff
+  # behind it, since it cannot run its migrations). Leaving this empty is a trap:
+  # every other PVC on this box names storage-db or storage-s3 explicitly.
+  #
+  # NOTE: storageClassName is immutable on a bound PVC. Changing it later means
+  # deleting `pvc/kagent-postgresql` first, which discards agent chat history.
+  # 2Gi is generous for session/chat history.
+  database:
+    postgres:
+      bundled:
+        enabled: true
+        storage: 2Gi
+        storageClassName: "storage-db"
+
+  # ── Resource budget ────────────────────────────────────────────────────────
+  # The box runs the 500k dp/s firehose alongside this, so kagent is sized to
+  # stay out of its way. The controller is the only component that does real
+  # work per request; agents are thin A2A shells that mostly wait on the model.
+  controller:
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "2",  memory: 1Gi }
+
+  # ── kagent's own telemetry -> the snowmelt stack ───────────────────────────
+  # snowmelt's OTel collector is METRICS-ONLY (its pipelines are metrics,
+  # metrics/postgres, metrics/clickhouse, metrics/node, metrics/ksm — there is
+  # no traces or logs pipeline), so kagent's traces and logs are aimed where the
+  # OTel demo's go: straight at Quickwit's OTLP gRPC port.
+  #
+  # MEASURED, 2026-08-15, kagent 0.9.12 — THIS CURRENTLY YIELDS NO SPANS.
+  # The agents log "Trace endpoint: …", "Created new TracerProvider",
+  # "Log provider configured with OTLP" and then export nothing: after live A2A
+  # runs against k8s-agent and promql-agent, `service_name:kagent*` in
+  # otel-traces-v0_7 stayed at 0 hits while the index itself held 4.8M spans
+  # from the demo.
+  #
+  # It is not this config. A hand-rolled OTLPSpanExporter run from inside the
+  # k8s-agent pod, against this exact endpoint, flushed True and the span was
+  # queryable in Quickwit seconds later — with AND without a URL scheme, so the
+  # bare host:port below is fine too. kagent 0.9.12 builds the providers but
+  # does not instrument its request path.
+  #
+  # Left enabled deliberately: it is correct, it costs nothing while no spans
+  # are produced, and it starts working the moment upstream adds instrumentation.
+  # Do not read Traces-page silence as a broken endpoint.
+  #
+  # kagent's pod logs DO reach Quickwit regardless — via the otelLogsCollector
+  # DaemonSet's filelog receiver, which already tails every pod on the node.
+  # That path is what puts service_name:kagent in otel-logs-v0_7; it owes
+  # nothing to the OTLP logging exporter configured here.
+  #
+  # Requires `quickwit.enabled: true` in the snowmelt release (it is, in
+  # contabo-values.yaml). If you flip Quickwit off for a throughput run, set
+  # both `enabled` flags here to false or the pods will retry a dead endpoint.
+  otel:
+    tracing:
+      enabled: true
+      exporter:
+        otlp:
+          endpoint: "snowmelt-quickwit.default.svc.cluster.local:7281"
+          protocol: "grpc"
+          insecure: true
+    logging:
+      enabled: true
+      exporter:
+        otlp:
+          endpoint: "snowmelt-quickwit.default.svc.cluster.local:7281"
+          insecure: true

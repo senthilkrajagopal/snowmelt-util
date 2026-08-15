@@ -1,0 +1,181 @@
+{{- if .Values.snowmeltPromql.enabled }}
+{{/*
+  A Prometheus MCP server pointed DIRECTLY at snowmelt's PromQL endpoint, and
+  an Agent bound to its tools.
+
+  WHY THIS EXISTS. kagent ships two things that sound like they already cover
+  this, and neither does:
+    - `promql-agent` is prompt-only. Its Agent CR has `tools: null` — it WRITES
+      PromQL and cannot run it. Useful, but it never touches a backend.
+    - `grafana-mcp` has query_prometheus / list_prometheus_* tools, but they
+      reach a backend through GRAFANA's datasource proxy. That works (the
+      Snowmelt-PromQL datasource is provisioned by snowmelt-extras) but it
+      couples every query to Grafana being up, and hides snowmelt behind a
+      datasource UID.
+  This is the direct path: agent → MCP → snowmelt:9092/promql.
+
+  THE /promql PREFIX IS THE WHOLE TRICK. snowmelt serves the Prometheus HTTP
+  API under a prefix rather than at the root, so the MCP server's base URL must
+  carry it — the client appends /api/v1/query to whatever PROMETHEUS_URL says.
+  Drop the prefix and every call 404s.
+*/}}
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: {{ .Values.snowmeltPromql.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt-kagent.labels" . | nindent 4 }}
+spec:
+  # kmcp reconciles this into a Deployment + Service + a RemoteMCPServer that
+  # the controller then discovers tools from. transportType `http` because this
+  # image serves Streamable HTTP itself — no stdio-to-HTTP sidecar needed, so
+  # none of the per-session process-spawn latency the CRD's `timeout` field
+  # exists to accommodate.
+  transportType: http
+  httpTransport:
+    targetPort: {{ .Values.snowmeltPromql.port }}
+    path: /mcp
+  deployment:
+    image: "{{ .Values.snowmeltPromql.image.repository }}:{{ .Values.snowmeltPromql.image.tag }}"
+    imagePullPolicy: {{ .Values.snowmeltPromql.image.pullPolicy }}
+    port: {{ .Values.snowmeltPromql.port }}
+    replicas: 1
+    env:
+      # MUST include the /promql prefix — see the note above.
+      PROMETHEUS_URL: {{ .Values.snowmeltPromql.url | quote }}
+      # Serve Streamable HTTP instead of the default stdio.
+      PROMETHEUS_MCP_SERVER_TRANSPORT: "http"
+      PROMETHEUS_MCP_BIND_HOST: "0.0.0.0"
+      PROMETHEUS_MCP_BIND_PORT: {{ .Values.snowmeltPromql.port | quote }}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+---
+{{/*
+  The agent that actually queries snowmelt. Modelled on the upstream
+  promql-agent's Agent CR, with `tools` bound to the MCP server above.
+
+  TOOL SET IS DELIBERATELY NOT "everything the MCP server offers".
+  prometheus-mcp-server 1.6.2 exposes five tools, and snowmelt implements four
+  of them. `get_targets` is omitted because snowmelt answers /api/v1/targets
+  with 501 Not Implemented — it is a database, not a scraper, so it has no
+  scrape targets to report. Leaving it bound would give the model a tool that
+  always errors, which it tends to retry rather than route around.
+*/}}
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: {{ .Values.snowmeltPromql.agentName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "snowmelt-kagent.labels" . | nindent 4 }}
+spec:
+  type: Declarative
+  description: >-
+    Queries the snowmelt metric store over its PromQL-compatible API. Writes
+    PromQL AND executes it, then interprets the results.
+  declarative:
+    runtime: python
+    modelConfig: {{ .Values.snowmeltPromql.modelConfigRef | default "default-model-config" }}
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          # `MCPServer`, NOT `RemoteMCPServer`. kmcp reconciles an MCPServer
+          # into a Deployment and a Service and stops there — it does NOT
+          # generate a companion RemoteMCPServer, so referencing that kind
+          # fails the agent with
+          #   failed to compile agent: RemoteMCPServer.kagent.dev "…" not found
+          # The controller resolves the MCPServer kind to the Service it
+          # created. (grafana-mcp is a RemoteMCPServer because its subchart
+          # ships one explicitly for an already-running Deployment — a
+          # different arrangement, hence the different kind two blocks down.)
+          kind: MCPServer
+          name: {{ .Values.snowmeltPromql.name }}
+          toolNames:
+            - execute_query
+            - execute_range_query
+            - list_metrics
+            - get_metric_metadata
+      # Cluster context, so it can connect a metric back to the workload
+      # producing it without a second agent in the loop.
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: kagent-tool-server
+          toolNames:
+            - k8s_get_resources
+            - k8s_get_available_api_resources
+    systemMessage: |
+      # Snowmelt PromQL Agent
+
+      You query **snowmelt**, a metric store that speaks the Prometheus HTTP
+      API. You do not merely suggest queries — you run them with your tools and
+      report what came back.
+
+      ## Method
+
+      1. Do not guess metric names. Call `list_metrics` first and work from what
+         actually exists. Metric names here are frequently NOT the textbook
+         Prometheus ones.
+      2. Use `execute_query` for a point in time, `execute_range_query` for
+         behaviour over a window. A range query needs start, end and step.
+      3. Report the numbers you got. If a query returns an empty result, say so
+         plainly and investigate — an empty result is a finding, not a failure,
+         and usually means the series does not exist or the label matcher is
+         too narrow.
+
+      ## Timestamps — read this before any range query
+
+      **You do not know the current date, and guessing one is the single most
+      common way these queries fail.** You have no clock; a date you invent will
+      be wrong by months, and the query will return an empty range that looks
+      like missing data.
+
+      **Get the real time from the backend.** Call `execute_query` with the
+      query `time()`. It returns the server's current Unix timestamp as a
+      float — for example `1786787329.368`. Do this first, then derive your
+      window from it (last 10 minutes = `start = now - 600`, `end = now`).
+
+      **Pass start / end / time as UNIX EPOCH SECONDS ONLY.** A plain integer
+      such as `1786787329`. This backend REJECTS RFC3339 with
+      `400 bad_data: invalid start parameter` — every variant of it, including
+      `2026-08-15T09:00:00Z`, `...+00:00`, `...000Z` and the form with no
+      timezone at all. Real Prometheus accepts RFC3339; this one does not, so
+      the habit is actively harmful here. `step` is more forgiving: `60`,
+      `60s` and `1m` all work.
+
+      If a range query returns 400, do not retry it unchanged and do not retry
+      it repeatedly — re-read this section, fix the timestamp format, and try
+      once more.
+
+      ## What this backend does and does not support
+
+      Verified against this deployment:
+
+      - **Working**: instant queries, range queries, regex label matchers,
+        `rate`, `sum by`, `avg_over_time`, `topk`, binary operators, `offset`,
+        `absent`, `label_replace`, `predict_linear`, `scalar`, `time`,
+        `vector`, `timestamp`, `histogram_quantile`, plus the
+        label/series/metadata endpoints.
+      - **NOT supported — do not use**:
+        - **RFC3339 timestamps** on `start`, `end` or `time` — 400 bad_data.
+          Unix epoch seconds only. See the timestamps section above.
+        - **Subqueries** (`metric[5m:1m]`) return 501 Not Implemented. If you
+          need one, restructure with a range function or a recording-style
+          aggregation instead.
+        - `targets`, `rules`, `alerts` and `status/config` are 501. This store
+          does not scrape, so there are no targets, no alerting rules and no
+          scrape config. If asked about them, say the backend does not expose
+          them rather than inventing an answer.
+        - `/api/v1/metadata` responds but is empty, so `get_metric_metadata`
+          will usually return nothing. Do not treat that as an error, and do
+          not conclude a metric is absent from it — check `list_metrics`.
+
+      Never present a query you have not run as though you had run it.
+{{- end }}

@@ -1,9 +1,14 @@
-{{- if and .Values.observability.grafana.enabled .Values.observability.prometheus.enabled }}
+{{- if .Values.observability.grafana.enabled }}
 # Grafana sidecar discovers any ConfigMap in the cluster carrying
 # `grafana_datasource: "1"` and feeds it as a provisioned datasource.
-# We point the default `Prometheus` datasource at the in-chart
-# Prometheus server (named `<release>-prometheus-server` by the
-# upstream chart).
+#
+# GATED ON GRAFANA ALONE, and each datasource gated on its own backend.
+# This used to require `and grafana.enabled prometheus.enabled`, which quietly
+# coupled the Snowmelt-PromQL datasource to Prometheus: turning Grafana on
+# without Prometheus (the sensible combination when snowmelt IS the backend
+# under test) rendered no ConfigMap at all, so Grafana started with ZERO
+# datasources and every dashboard was dead. Snowmelt's PromQL endpoint has
+# nothing to do with whether a Prometheus server exists.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +21,7 @@ data:
   prometheus.yaml: |
     apiVersion: 1
     datasources:
+      {{- if .Values.observability.prometheus.enabled }}
       - name: Prometheus
         # UID pinned because every dashboard panel references
         # `"datasource": {"type": "prometheus", "uid": "prometheus"}`.
@@ -27,6 +33,7 @@ data:
         url: http://{{ .Release.Name }}-prometheus-server.{{ .Release.Namespace }}.svc.cluster.local
         isDefault: true
         editable: true
+      {{- end }}
       - name: Snowmelt-PromQL
         # Snowmelt's own PromQL-compatible HTTP API, served by the
         # `query` crate inside each snowmelt pod on port 9092. The
@@ -38,6 +45,10 @@ data:
         type: prometheus
         access: proxy
         url: http://{{ .Values.snowmeltFullname }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.snowmeltPromqlPort }}/promql
-        isDefault: false
+        # Default ONLY when there is no Prometheus to hold the title. Grafana
+        # refuses to provision two defaults, and a datasource-less panel falls
+        # back to whatever is default — so with Prometheus off, snowmelt has to
+        # be it or unqualified panels resolve to nothing.
+        isDefault: {{ not .Values.observability.prometheus.enabled }}
         editable: true
 {{- end }}
