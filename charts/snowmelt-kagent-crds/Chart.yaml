@@ -1,0 +1,30 @@
+apiVersion: v2
+name: snowmelt-kagent-crds
+description: >
+  CustomResourceDefinitions for kagent (Agent, ModelConfig, RemoteMCPServer,
+  ToolServer, Memory, MCPServer, …). A SEPARATE RELEASE from `snowmelt-kagent`
+  and it MUST be installed first — see the note below.
+type: application
+version: 0.1.0
+appVersion: "0.9.12"
+
+# ── Why this is its own chart and not a dependency of snowmelt-kagent ────────
+# Upstream ships the CRDs in `kagent-crds/templates/`, NOT in a Helm `crds/`
+# directory. Helm only gets its "install CRDs first, then refresh discovery"
+# behaviour for the `crds/` directory; anything under `templates/` is an
+# ordinary manifest. And `helm install` resolves EVERY manifest's GVK against
+# the API server's REST mapper *before* it creates anything — so a single
+# release containing both the CRDs and the `Agent`/`ModelConfig` custom
+# resources that the kagent chart ships fails at build time with
+#   no matches for kind "Agent" in version "kagent.dev/v1alpha2"
+# The CRDs are never created because the build never completes. Two releases,
+# CRDs first, is upstream's documented model and the only one that works.
+dependencies:
+  # Vendored as charts/kagent-crds-0.9.12.tgz (pulled from
+  # oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds) so a deploy needs no
+  # registry access — same convention as the other charts in this repo.
+  # Bundles kmcp-crds (MCPServer) and substrate-crds (ActorTemplate,
+  # WorkerPool) as its own subcharts.
+  - name: kagent-crds
+    version: "0.9.12"
+    repository: oci://ghcr.io/kagent-dev/kagent/helm

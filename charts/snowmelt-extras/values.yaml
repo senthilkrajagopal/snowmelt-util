@@ -195,11 +195,22 @@ keycloak:
   #   http://<ip>:30081/auth
   # giving issuer <KC_HOSTNAME>/realms/<realm>. Always confirm against the live
   # discovery document before configuring snowmelt's `issuer`.
+  # KC_BOOTSTRAP_ADMIN_* APPLIES ON FIRST BOOT ONLY. Keycloak creates the
+  # master-realm admin when the database is empty and ignores these variables
+  # ever after — and with `dev-file` on a PVC the database is not empty after
+  # the first start. Changing the password below therefore affects only a fresh
+  # install (or one whose PVC has been deleted). To rotate it on a running
+  # instance, go through the admin API:
+  #   kubectl exec -n <ns> <release>-keycloak-0 -- sh -c '
+  #     /opt/keycloak/bin/kcadm.sh config credentials --server \
+  #       http://localhost:8080/auth --realm master --user admin --password <old>
+  #     /opt/keycloak/bin/kcadm.sh set-password -r master --username admin \
+  #       --new-password <new>'
   extraEnv: |
     - name: KC_BOOTSTRAP_ADMIN_USERNAME
       value: admin
     - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-      value: admin
+      value: sn0wmelt
     - name: KC_HOSTNAME_STRICT
       value: "false"
 
@@ -256,6 +267,18 @@ keycloak:
     # config EXACTLY — the IdP compares it byte-for-byte.
     redirectUris:
       - "http://localhost:30080/api/auth/oidc/keycloak/callback"
+    # Extra confidential clients for other relying parties on this realm. Each
+    # is {clientId, secret, redirectUris[], name?}. Empty here; the contabo
+    # overlay adds the `kagent` client that fronts kagent's UI with
+    # oauth2-proxy (see deploy/contabo-extras-keycloak.yaml).
+    #
+    # SEEDED ON FIRST BOOT ONLY, like everything else in this realm —
+    # `--import-realm` skips a realm that already exists, and the H2 database is
+    # on a PVC. Adding an entry here and running `helm upgrade` rewrites the
+    # ConfigMap but does NOT create the client on a Keycloak that has already
+    # booted. Create it live with kcadm.sh as well (or delete the realm and let
+    # it re-import, losing anything console-configured).
+    extraClients: []
     # `id` PINS the Keycloak user id, which becomes the OIDC `sub` claim and
     # is snowmelt's identity key. Without it Keycloak mints a fresh id on
     # every realm import — and since this IdP is in-memory, that is every
@@ -288,6 +311,20 @@ keycloak:
         firstName: Carol
         lastName: Example
         password: password
+      # Operator login for the kagent UI behind oauth2-proxy (the `kagent`
+      # client added via extraClients in the contabo overlay). Separate from
+      # the sso-* users above because those exist to exercise specific branches
+      # of snowmelt's OIDC callback and are not meant to be a general login.
+      #
+      # Seeded on a FRESH install only — the live contabo Keycloak got this
+      # user via kcadm.sh on 2026-08-15, same as the kagent client.
+      - username: kagent
+        id: 44444444-4444-4444-8444-444444444444
+        email: kagent@example.com
+        emailVerified: true
+        firstName: Kagent
+        lastName: Operator
+        password: kagent-sn0wmelt
 
 # ── Prometheus sub-chart values ──────────────────────────────────────────────
 prometheus:
