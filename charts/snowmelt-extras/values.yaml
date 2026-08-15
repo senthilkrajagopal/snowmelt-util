@@ -14,6 +14,49 @@
 snowmeltFullname: snowmelt
 snowmeltPromqlPort: 9092
 
+# ── Istio service mesh ────────────────────────────────────────────────────────
+# The CLIENT half of the mesh config the snowmelt chart owns.
+#
+# datagen exports OTLP/gRPC to "<snowmeltFullname>-otel-collector:4317" — a
+# ClusterIP Service. Kubernetes balances that at L4, i.e. per CONNECTION, and
+# gRPC opens ONE long-lived HTTP/2 connection and multiplexes every export over
+# it. So each datagen replica pins to exactly one collector pod for its
+# lifetime, however many replicas the collector has, and a collector rollout
+# strands it on a dead endpoint until datagen itself restarts.
+#
+# A sidecar fixes both: datagen talks to its local Envoy, which balances per
+# REQUEST across endpoints it tracks live from istiod. This is the half that
+# actually does the work — the snowmelt chart's DestinationRule for the
+# collector Service sets the policy, but nothing applies it until the CALLER
+# carries a sidecar.
+#
+# Requires Istio to already be installed and `istio.enabled=true` on the
+# snowmelt release (which renders that DestinationRule). Injecting here without
+# it is harmless but pointless: Envoy falls back to the same ClusterIP VIP.
+istio:
+  # Inject the sidecar into datagen's pods.
+  enabled: false
+
+  # ⚠ THE SIDECAR ALONE DOES NOTHING IF datagen STILL DIALS A HEADLESS SERVICE.
+  #
+  # Istio passes headless traffic straight through to the IP the client already
+  # resolved — Envoy never load-balances it. So a deployment that overrides
+  # `datagen.otlpEndpoint` to `snowmelt-headless:4317` (datagen's own DNS
+  # fan-out, the pre-mesh workaround) gets an injected pod, a running Envoy,
+  # and exactly the same pinning it had before. Nothing errors; it just
+  # silently fails to help.
+  #
+  # When `istio.enabled`, point datagen at the CLUSTERIP service instead and
+  # let Envoy do the fan-out:
+  #
+  #   datagen:
+  #     otlpEndpoint: http://snowmelt.<namespace>.svc.cluster.local:4317
+  #
+  # That also removes the reason the headless workaround existed: datagen
+  # resolves DNS once at connect, so a snowmelt rollout stranded it on dead pod
+  # IPs until datagen itself restarted. Envoy tracks endpoints live from
+  # istiod, so pod IPs can churn freely.
+
 # ── Observability toggles (gate the prometheus + grafana sub-charts + the
 #    grafana-dashboard ConfigMaps) ────────────────────────────────────────────
 observability:

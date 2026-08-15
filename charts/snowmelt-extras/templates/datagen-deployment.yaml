@@ -26,9 +26,22 @@ spec:
       labels:
         {{- include "snowmelt.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: datagen
+        {{- if .Values.istio.enabled }}
+        # Opt THIS workload into the mesh without namespace-wide injection,
+        # which would also sweep in prometheus/grafana/keycloak. datagen is the
+        # CALLER on the L4-pinned hop, so this is the injection that matters —
+        # see the `istio:` block in values.yaml.
+        sidecar.istio.io/inject: "true"
+        {{- end }}
       annotations:
         # Bounce the pod when the config changes.
         checksum/config: {{ include (print $.Template.BasePath "/datagen-configmap.yaml") . | sha256sum }}
+        {{- if .Values.istio.enabled }}
+        # Hold datagen until Envoy is ready. Without this its OTLP sink dials
+        # the collector before the sidecar's listeners exist; the gRPC channel
+        # fails and datagen retries into a backoff it never really leaves.
+        proxy.istio.io/config: '{"holdApplicationUntilProxyStarts": true}'
+        {{- end }}
     spec:
       containers:
         - name: datagen
