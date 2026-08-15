@@ -56,6 +56,36 @@ data:
             "pkce.code.challenge.method": "S256"
           }
         }
+        {{- /*
+          Additional confidential clients — one per OIDC relying party beyond
+          snowmelt itself (oauth2-proxy in front of kagent, for instance).
+          Same shape as the snowmelt client above, minus the PKCE attribute:
+          oauth2-proxy 7.6 does not send a code_challenge unless told to, and
+          Keycloak rejects the exchange if the client demands one that never
+          arrives.
+        */}}
+        {{- range .Values.keycloak.realmImport.extraClients }}
+        ,{
+          "clientId": {{ .clientId | quote }},
+          "name": {{ .name | default .clientId | quote }},
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "bearerOnly": false,
+          "secret": {{ .secret | quote }},
+          "standardFlowEnabled": true,
+          "implicitFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": [
+            {{- range $i, $u := .redirectUris }}
+            {{- if $i }},{{ end }}
+            {{ $u | quote }}
+            {{- end }}
+          ],
+          "webOrigins": ["+"]
+        }
+        {{- end }}
       ],
       "users": [
         {{- range $i, $u := .Values.keycloak.realmImport.users }}

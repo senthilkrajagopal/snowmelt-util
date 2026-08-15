@@ -28,11 +28,18 @@ keycloak:
   # URLs match where the server actually listens.
   #
   # Resulting issuer: http://62.171.163.164:30081/auth/realms/snowmelt
+  #
+  # KC_BOOTSTRAP_ADMIN_PASSWORD IS FIRST-BOOT-ONLY and this instance booted on
+  # 2026-08-09, so the value below did NOT set the live password. The running
+  # admin password was rotated to `sn0wmelt` on 2026-08-15 through
+  # `kcadm.sh set-password` (old `admin` now rejected, verified). The two agree
+  # today; they agree in future only for a fresh install or after the PVC is
+  # deleted. See the note in charts/snowmelt-extras/values.yaml.
   extraEnv: |
     - name: KC_BOOTSTRAP_ADMIN_USERNAME
       value: admin
     - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-      value: admin
+      value: sn0wmelt
     - name: KC_HOSTNAME
       value: "http://62.171.163.164:30081/auth"
     - name: KC_HOSTNAME_STRICT
@@ -55,3 +62,22 @@ keycloak:
     # Byte-for-byte identical to admin.oidc.providers.keycloak.redirect-url.
     redirectUris:
       - "http://62.171.163.164:30080/api/auth/oidc/keycloak/callback"
+
+    # Second relying party on this realm: oauth2-proxy, fronting the kagent UI
+    # on :30082 (see deploy/contabo-kagent.yaml). The redirect URI is
+    # oauth2-proxy's fixed callback path and must match byte-for-byte — the
+    # `--redirect-url` flag it is given, and what Keycloak compares against.
+    #
+    # SEEDED ON FIRST BOOT ONLY. This entry did not create the live client;
+    # that was done with kcadm.sh against the running instance on 2026-08-15.
+    # It is here so a rebuilt Keycloak comes up with the client already
+    # present rather than needing the manual step again.
+    #
+    # Dev-only secret, in a ConfigMap in plain text exactly like the snowmelt
+    # client's. Nothing on this realm is confidential.
+    extraClients:
+      - clientId: kagent
+        name: Kagent
+        secret: kagent-dev-secret
+        redirectUris:
+          - "http://62.171.163.164:30082/oauth2/callback"
