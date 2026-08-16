@@ -39,6 +39,30 @@ if ! kubectl get secret kagent-mistral -n "$NS" >/dev/null 2>&1; then
   echo "    --from-literal=OPENAI_API_KEY=<your mistral key>"
   exit 10
 fi
+
+# The gateway cutover has its own credential, and getting it wrong does not fail
+# at deploy time — it fails on every agent's first turn, as a 401 from the front
+# door that reads like the model is broken. Checked here only when the overlay
+# actually asks for it, so the direct-to-Mistral path stays a one-Secret deploy.
+if grep -qE '^\s*enabled:\s*true' <(sed -n '/^llmViaGateway:/,/^[a-zA-Z]/p' "$DEP/contabo-kagent.yaml" 2>/dev/null); then
+  echo "--- preflight: agentgateway front-door key (llmViaGateway is on) ---"
+  if ! kubectl get secret kagent-agentgateway -n "$NS" >/dev/null 2>&1; then
+    echo "MISSING secret kagent-agentgateway in ns $NS — every agent would reach"
+    echo "the gateway and be refused at the front door. Its value is the"
+    echo "agentgateway chart's apiKey.value, NOT the Mistral key:"
+    echo "  kubectl create secret generic kagent-agentgateway -n $NS \\"
+    echo "    --from-literal=OPENAI_API_KEY=<agentgateway apiKey.value>"
+    exit 11
+  fi
+  # The gateway holds the real upstream credential. Its absence is not this
+  # script's to fix (different namespace, different release) but it is this
+  # script's to WARN about, because the symptom lands on kagent.
+  if ! kubectl get secret agentgateway-model-key -n agentgateway >/dev/null 2>&1; then
+    echo "WARNING: ns agentgateway has no Secret agentgateway-model-key, so the"
+    echo "gateway has no upstream Mistral credential — agents will authenticate"
+    echo "at the front door and then fail against api.mistral.ai."
+  fi
+fi
 echo "ok: kagent-mistral present"
 
 echo "--- preflight: oauth2-proxy secret ---"

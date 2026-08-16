@@ -11,10 +11,21 @@
 # in `kagent`, so every cross-reference below is a `.default.svc.cluster.local`
 # FQDN.
 #
-# THE MISTRAL KEY IS NOT HERE. The chart expects a Secret `kagent-mistral` with
-# key OPENAI_API_KEY (the key name is OPENAI_API_KEY because Mistral is driven
-# through kagent's OpenAI-compatible provider — see the chart's values.yaml).
-# deploy-kagent.sh refuses to run until that Secret exists.
+# NO CREDENTIAL IS HERE. Two Secrets are required, both created out of band and
+# both preflighted by deploy-kagent.sh:
+#
+#   kagent-mistral       ns kagent        the real Mistral key (fallback path)
+#   kagent-agentgateway  ns kagent        the agentgateway FRONT-DOOR key
+#
+# Both use the data key OPENAI_API_KEY, because Mistral is driven through
+# kagent's OpenAI-compatible provider and it is the OpenAI client that reads it.
+#
+# WHICH ONE IS LIVE DEPENDS ON `llmViaGateway.enabled` BELOW, and they are not
+# interchangeable: with the gateway on, kagent sends the GATEWAY key (it has
+# exactly one credential field and sends it as `Authorization: Bearer` to
+# whatever baseUrl it is given), and the real Mistral key never enters this
+# namespace at all — it lives only in `agentgateway-model-key` in ns
+# agentgateway, where the AgentgatewayModel injects it upstream.
 
 # ── The UI's direct NodePort is OFF ──────────────────────────────────────────
 # It used to be on, serving kagent-ui unauthenticated on :30082. oauth2-proxy
@@ -25,6 +36,25 @@
 uiNodePort:
   enabled: false
   port: 30082
+
+# ── ALL LLM CALLS GO THROUGH AGENTGATEWAY ────────────────────────────────────
+# Was `--set` on the command line, which meant a fresh install silently put all
+# 11 agents back on api.mistral.ai and the gateway saw none of their traffic.
+# Recorded here so the cutover is a property of the deployment, not of whoever
+# last ran helm.
+#
+# What this buys, visible in the gateway's access log and nowhere else:
+#   protocol=llm  gen_ai.provider.name=mistral  gen_ai.request.model=…
+#   gen_ai.usage.input_tokens=…  gen_ai.usage.output_tokens=…  trace.id=…
+#
+# PREREQUISITES, or every agent 401s at the front door:
+#   - Secret kagent-agentgateway (ns kagent)      = agentgateway apiKey.value
+#   - Secret agentgateway-model-key (ns agentgateway) = the real Mistral key
+#   - the agentgateway release deployed, with model.enabled
+# Set `enabled: false` to fall back to direct-to-Mistral; the fallback
+# ModelConfig still references kagent-mistral, so keep that Secret in place.
+llmViaGateway:
+  enabled: true
 
 kagent:
   # ── oauth2-proxy → the snowmelt-extras Keycloak ────────────────────────────
